@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
+"""""
 Main GUI application for image_postprocess pipeline with camera-simulator controls.
-"""
+"""""
 
 import sys
 import os
