@@ -11,13 +11,48 @@ import argparse
 import os
 from PIL import Image
 import numpy as np
+import piexif
+from datetime import datetime
 
-from .utils import remove_exif_pil, add_gaussian_noise, clahe_color_correction, randomized_perturbation, fourier_match_spectrum
+
+from .utils import add_gaussian_noise, clahe_color_correction, randomized_perturbation, fourier_match_spectrum
 from .camera_pipeline import simulate_camera_pipeline
+
+def add_fake_exif():
+    """
+    Generates a plausible set of fake EXIF data.
+    Returns:
+        bytes: The EXIF data as a byte string, ready for insertion.
+    """
+    # Get current time for timestamp
+    now = datetime.now()
+    datestamp = now.strftime("%Y:%m:%d %H:%M:%S")
+
+    # Define some plausible fake EXIF tags
+    zeroth_ifd = {
+        piexif.ImageIFD.Make: b"PurinCamera",
+        piexif.ImageIFD.Model: b"Model420X",
+        piexif.ImageIFD.Software: b"NovaImageProcessor",
+        piexif.ImageIFD.DateTime: datestamp.encode('utf-8'),
+    }
+    exif_ifd = {
+        piexif.ExifIFD.DateTimeOriginal: datestamp.encode('utf-8'),
+        piexif.ExifIFD.DateTimeDigitized: datestamp.encode('utf-8'),
+        piexif.ExifIFD.ExposureTime: (1, 125),  # 1/125s
+        piexif.ExifIFD.FNumber: (28, 10),      # F/2.8
+        piexif.ExifIFD.ISOSpeedRatings: 200,
+        piexif.ExifIFD.FocalLength: (50, 1),      # 50mm
+    }
+    gps_ifd = {} # Empty GPS info
+
+    exif_dict = {"0th": zeroth_ifd, "Exif": exif_ifd, "GPS": gps_ifd, "1st": {}, "thumbnail": None}
+    exif_bytes = piexif.dump(exif_dict)
+    return exif_bytes
 
 def process_image(path_in, path_out, args):
     img = Image.open(path_in).convert('RGB')
-    img = remove_exif_pil(img)
+    # img = remove_exif_pil(img) # <-- This line is removed
+
     arr = np.array(img)
 
     arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
@@ -52,7 +87,10 @@ def process_image(path_in, path_out, args):
                                        seed=args.seed)
 
     out_img = Image.fromarray(arr)
-    out_img.save(path_out)
+    
+    # Generate fake EXIF data and save it with the image
+    fake_exif_bytes = add_fake_exif()
+    out_img.save(path_out, exif=fake_exif_bytes)
 
 def build_argparser():
     p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation")
