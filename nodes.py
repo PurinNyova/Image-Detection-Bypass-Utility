@@ -220,5 +220,5 @@ NODE_CLASS_MAPPINGS = {
     "NovaNodes": NovaNodes,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "NovaNodes": "Image Postprocess (FOOL AI)",
+    "NovaNodes": "Image Postprocess (NOVA NODES)",
 }
