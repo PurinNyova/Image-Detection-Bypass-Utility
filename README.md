@@ -24,6 +24,10 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 pip install pyqt5 pillow numpy matplotlib piexif
 # optional but recommended for color matching / some functionality:
 pip install opencv-python
+
+OR
+
+pip install -r requirements.txt
 ```
 
 ### Files expected in the same folder
