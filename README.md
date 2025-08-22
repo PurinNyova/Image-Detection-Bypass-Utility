@@ -1,4 +1,4 @@
-# Image Postprocess — GUI (with Camera Simulator)
+# Image Detection Bypass Utility
 
 A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live previews, an input/output analysis panel, an optional camera simulator, and easy parameter control — all wrapped in a clean, user-friendly interface.
 
