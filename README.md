@@ -132,10 +132,3 @@ def process_image(inpath: str, outpath: str, args):
 MIT — free to use and adapt. Please include attribution if you fork or republish.
 
 ---
-
-## Screenshot
-Add a screenshot in `docs/screenshot.png` to show off the UI:
-
-```markdown
-![GUI preview](docs/screenshot.png)
-```
