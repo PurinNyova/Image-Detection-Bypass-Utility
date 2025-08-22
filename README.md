@@ -17,6 +17,19 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 
 ## Quick start
 
+### ComfyUI Integration
+
+Use ComfyUI Manager and install via GitHub link.
+Or manually clone to custom_nodes folder.
+```bash
+git clone https://github.com/PurinNyova/Image-Detection-Bypass-Utility
+```
+then
+```bash
+cd Image-Detection-Bypass-Utility
+pip install -r requirements.txt
+```
+
 ### Requirements
 - Python 3.8+ recommended  
 - PyPI packages:
