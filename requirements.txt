@@ -1,0 +1,6 @@
+pyqt5
+pillow
+numpy
+matplotlib
+piexif
+opencv-python
