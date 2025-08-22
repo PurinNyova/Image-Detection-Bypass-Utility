@@ -19,6 +19,7 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 
 ### ComfyUI Integration
 
+
 Use ComfyUI Manager and install via GitHub link.
 Or manually clone to custom_nodes folder.
 ```bash
@@ -29,6 +30,7 @@ then
 cd Image-Detection-Bypass-Utility
 pip install -r requirements.txt
 ```
+Thanks to u/Race88 for the help on the ComfyUI code.
 
 ### Requirements
 - Python 3.8+ recommended  
