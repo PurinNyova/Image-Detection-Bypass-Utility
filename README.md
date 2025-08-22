@@ -21,7 +21,7 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 - Python 3.8+ recommended  
 - PyPI packages:
 ```bash
-pip install pyqt5 pillow numpy matplotlib
+pip install pyqt5 pillow numpy matplotlib piexif
 # optional but recommended for color matching / some functionality:
 pip install opencv-python
 ```
