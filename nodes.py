@@ -31,66 +31,49 @@ class NovaNodes:
 
     @classmethod
     def INPUT_TYPES(s):
+        # --- MODIFICATION: Rearranged inputs and updated defaults to match the reference image ---
         return {
             "required": {
                 "image": ("IMAGE",),
 
-                # AWB
-                "enable_awb": ("BOOLEAN", {"default": False}),
-
-                # EXIF
-                "apply_exif_o": ("BOOLEAN", {"default": True}),
-
-                # Noise
-                "noise_std_frac": ("FLOAT", {"default": 0.015, "min": 0.0, "max": 0.1, "step": 0.001}),
-                "hot_pixel_prob": ("FLOAT", {"default": 1e-6, "min": 0.0, "max": 1e-3, "step": 1e-7}),
-                "perturb_mag_frac": ("FLOAT", {"default": 0.008, "min": 0.0, "max": 0.05, "step": 0.001}),
-
-                # CLAHE
-                "clahe_clip": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 10.0, "step": 0.1}),
+                # Parameters (Manual Mode) - Order and defaults match the image
+                "noise_std_frac": ("FLOAT", {"default": 0.02, "min": 0.0, "max": 0.1, "step": 0.001}),
+                "clahe_clip": ("FLOAT", {"default": 2.00, "min": 0.5, "max": 10.0, "step": 0.1}),
                 "clahe_grid": ("INT", {"default": 8, "min": 2, "max": 32, "step": 1}),
-
-                # Fourier
+                "fourier_cutoff": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "apply_fourier_o": ("BOOLEAN", {"default": True}),
-                "fourier_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "fourier_strength": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "fourier_randomness": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 0.5, "step": 0.01}),
                 "fourier_phase_perturb": ("FLOAT", {"default": 0.08, "min": 0.0, "max": 0.5, "step": 0.01}),
-                "fourier_alpha": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.1}),
                 "fourier_radial_smooth": ("INT", {"default": 5, "min": 0, "max": 50, "step": 1}),
                 "fourier_mode": (["auto", "ref", "model"], {"default": "auto"}),
-
-                # Vignette
-                "apply_vignette_o": ("BOOLEAN", {"default": True}),
-                "vignette_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-
-                # Chromatic aberration
-                "apply_chromatic_aberration_o": ("BOOLEAN", {"default": True}),
-                "ca_shift": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1}),
-
-                # Banding (FIXED)
-                "apply_banding_o": ("BOOLEAN", {"default": True}),
-                "banding_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-
-                # Motion blur
-                "apply_motion_blur_o": ("BOOLEAN", {"default": True}),
-                "motion_blur_ksize": ("INT", {"default": 7, "min": 3, "max": 31, "step": 2}),
-
-                # JPEG cycles
-                "apply_jpeg_cycles_o": ("BOOLEAN", {"default": True}),
-                "jpeg_cycles": ("INT", {"default": 2, "min": 1, "max": 10, "step": 1}),
-                "jpeg_quality": ("INT", {"default": 85, "min": 10, "max": 100, "step": 1}),
-
-                # Camera simulation
-                "sim_camera": ("BOOLEAN", {"default": False}),
+                "fourier_alpha": ("FLOAT", {"default": 1.00, "min": 0.1, "max": 4.0, "step": 0.1}),
+                "perturb_mag_frac": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 0.05, "step": 0.001}),
+                "enable_awb": ("BOOLEAN", {"default": True}),
+                "sim_camera": ("BOOLEAN", {"default": True}), # This corresponds to "Enable camera pipeline simulation"
+                "enable_lut": ("BOOLEAN", {"default": True}),
+                "lut": ("STRING", {"default": "X://insert/path/here(.png/.npy/.cube)", "vhs_path_extensions": lut_extensions}),
+                "lut_strength": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
+                
+                # Camera simulator options - Order and defaults match the image
                 "enable_bayer": ("BOOLEAN", {"default": True}),
-                "iso_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.1}),
-                "read_noise": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 50.0, "step": 0.1}),
-
-                # LUT
-                # --- CHANGE 1: Added enable_lut toggle ---
-                "enable_lut": ("BOOLEAN", {"default": False}),
-                "lut": ("STRING", {"default": "X://insert/path/here.npy", "vhs_path_extensions": lut_extensions}),
-                "lut_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "apply_jpeg_cycles_o": ("BOOLEAN", {"default": True}),
+                "jpeg_cycles": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
+                "jpeg_quality": ("INT", {"default": 88, "min": 10, "max": 100, "step": 1}),
+                "apply_vignette_o": ("BOOLEAN", {"default": True}),
+                "vignette_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "apply_chromatic_aberration_o": ("BOOLEAN", {"default": True}),
+                "ca_shift": ("FLOAT", {"default": 1.20, "min": 0.0, "max": 5.0, "step": 0.1}),
+                "iso_scale": ("FLOAT", {"default": 1.00, "min": 0.1, "max": 16.0, "step": 0.1}),
+                "read_noise": ("FLOAT", {"default": 2.00, "min": 0.0, "max": 50.0, "step": 0.1}),
+                "hot_pixel_prob": ("FLOAT", {"default": 1e-7, "min": 0.0, "max": 1e-3, "step": 1e-7}),
+                "apply_banding_o": ("BOOLEAN", {"default": True}),
+                "banding_strength": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "apply_motion_blur_o": ("BOOLEAN", {"default": True}),
+                "motion_blur_ksize": ("INT", {"default": 1, "min": 1, "max": 31, "step": 2}),
+                
+                # Other options
+                "apply_exif_o": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "awb_ref_image": ("IMAGE",),
@@ -103,40 +86,43 @@ class NovaNodes:
     FUNCTION = "process"
     CATEGORY = "postprocessing"
 
-    def process(self, image, awb_ref_image=None, fft_ref_image=None,
-                enable_awb=False,
-                apply_exif_o=True,
-                noise_std_frac=0.015,
-                hot_pixel_prob=1e-6,
-                perturb_mag_frac=0.008,
+    def process(self, image, 
+                noise_std_frac=0.02,
                 clahe_clip=2.0,
                 clahe_grid=8,
+                fourier_cutoff=0.25,
                 apply_fourier_o=True,
                 fourier_strength=0.9,
                 fourier_randomness=0.05,
                 fourier_phase_perturb=0.08,
-                fourier_alpha=1.0,
                 fourier_radial_smooth=5,
                 fourier_mode="auto",
-                apply_vignette_o=True,
-                vignette_strength=0.5,
-                apply_chromatic_aberration_o=True,
-                ca_shift=1.0,
-                apply_banding_o=True,
-                banding_strength=0.5,
-                apply_motion_blur_o=True,
-                motion_blur_ksize=7,
-                apply_jpeg_cycles_o=True,
-                jpeg_cycles=2,
-                jpeg_quality=85,
-                sim_camera=False,
+                fourier_alpha=1.0,
+                perturb_mag_frac=0.01,
+                enable_awb=True,
+                sim_camera=True,
+                enable_lut=True,
+                lut="",
+                lut_strength=1.0,
                 enable_bayer=True,
+                apply_jpeg_cycles_o=True,
+                jpeg_cycles=1,
+                jpeg_quality=88,
+                apply_vignette_o=True,
+                vignette_strength=0.35,
+                apply_chromatic_aberration_o=True,
+                ca_shift=1.20,
                 iso_scale=1.0,
                 read_noise=2.0,
-                # --- CHANGE 2: Added enable_lut to the function signature ---
-                enable_lut=False,
-                lut="",
-                lut_strength=1.0):
+                hot_pixel_prob=1e-7,
+                apply_banding_o=True,
+                banding_strength=0.0,
+                apply_motion_blur_o=True,
+                motion_blur_ksize=1,
+                apply_exif_o=True,
+                awb_ref_image=None, 
+                fft_ref_image=None
+                ):
 
         if process_image is None:
             raise ImportError(f"Could not import process_image function: {IMPORT_ERROR}")
@@ -223,14 +209,13 @@ class NovaNodes:
                 motion_blur_kernel=motion_blur_ksize if apply_motion_blur_o else 1,
                 jpeg_cycles=jpeg_cycles if apply_jpeg_cycles_o else 1,
                 jpeg_qmin=jpeg_quality,
-                jpeg_qmax=jpeg_quality,
+                jpeg_qmax=96, # As per image range
                 sim_camera=sim_camera,
                 no_no_bayer=not enable_bayer, # FIX: Inverted logic corrected
                 iso_scale=iso_scale,
                 read_noise=read_noise,
-                seed=None,
-                cutoff=0.25,
-                # --- CHANGE 3: Updated logic to check enable_lut toggle ---
+                seed=None, # Seed is not user-configurable in this version
+                cutoff=fourier_cutoff,
                 lut=(lut if enable_lut and lut != "" else None),
                 lut_strength=lut_strength,
             )
