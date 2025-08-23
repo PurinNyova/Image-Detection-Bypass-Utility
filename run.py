@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Main GUI application for image_postprocess pipeline with camera-simulator controls.
+
+Updated: added LUT support UI (enable checkbox, file chooser, strength) and wiring to on_run.
 """
 
 import sys
@@ -9,7 +11,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog,
     QHBoxLayout, QVBoxLayout, QFormLayout, QSlider, QSpinBox, QDoubleSpinBox,
-    QProgressBar, QMessageBox, QLineEdit, QComboBox, QCheckBox, QToolButton
+    QProgressBar, QMessageBox, QLineEdit, QComboBox, QCheckBox, QToolButton, QScrollArea
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
@@ -100,9 +102,15 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         left_v.addWidget(self.progress)
 
-        # Right: controls + analysis panels
-        right_v = QVBoxLayout()
-        main_h.addLayout(right_v, 3)
+        # Right: controls + analysis panels (with scroll area)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; }")
+        main_h.addWidget(scroll_area, 3)
+
+        scroll_widget = QWidget()
+        right_v = QVBoxLayout(scroll_widget)
+        scroll_area.setWidget(scroll_widget)
 
         # Auto Mode toggle (keeps top-level quick switch visible)
         self.auto_mode_chk = QCheckBox("Enable Auto Mode")
@@ -232,6 +240,37 @@ class MainWindow(QMainWindow):
         self.sim_camera_chk.setChecked(False)
         self.sim_camera_chk.stateChanged.connect(self._on_sim_camera_toggled)
         params_layout.addRow(self.sim_camera_chk)
+
+        # --- LUT support UI ---
+        self.lut_chk = QCheckBox("Enable LUT")
+        self.lut_chk.setChecked(False)
+        self.lut_chk.setToolTip("Enable applying a 1D/.npy/.cube LUT to the output image")
+        self.lut_chk.stateChanged.connect(self._on_lut_toggled)
+        params_layout.addRow(self.lut_chk)
+
+        # LUT chooser (hidden until checkbox checked)
+        self.lut_line = QLineEdit()
+        self.lut_btn = QPushButton("Choose LUT")
+        self.lut_btn.clicked.connect(self.choose_lut)
+        lut_box = QWidget()
+        lut_box_layout = QHBoxLayout()
+        lut_box_layout.setContentsMargins(0, 0, 0, 0)
+        lut_box.setLayout(lut_box_layout)
+        lut_box_layout.addWidget(self.lut_line)
+        lut_box_layout.addWidget(self.lut_btn)
+        params_layout.addRow("LUT file (png/.npy/.cube)", lut_box)
+
+        self.lut_strength_spin = QDoubleSpinBox()
+        self.lut_strength_spin.setRange(0.0, 1.0)
+        self.lut_strength_spin.setSingleStep(0.01)
+        self.lut_strength_spin.setValue(1.0)
+        self.lut_strength_spin.setToolTip("Blend strength for LUT (0.0 = no effect, 1.0 = full LUT)")
+        params_layout.addRow("LUT strength", self.lut_strength_spin)
+
+        # Initially hide LUT controls
+        lut_box.setVisible(False)
+        self.lut_strength_spin.setVisible(False)
+        self._lut_controls = (lut_box, self.lut_strength_spin)
 
         # Camera simulator collapsible group
         self.camera_box = CollapsibleBox("Camera simulator options")
@@ -374,6 +413,16 @@ class MainWindow(QMainWindow):
         if path:
             self.output_line.setText(path)
 
+    def choose_lut(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose LUT file", str(Path.home()), "LUTs (*.png *.npy *.cube);;All files (*)")
+        if path:
+            self.lut_line.setText(path)
+
+    def _on_lut_toggled(self, state):
+        visible = (state == Qt.Checked)
+        for w in self._lut_controls:
+            w.setVisible(visible)
+
     def load_preview(self, widget: QLabel, path: str):
         if not path or not os.path.exists(path):
             widget.setText("No image")
@@ -468,6 +517,15 @@ class MainWindow(QMainWindow):
 
         # FFT spectral matching reference
         args.fft_ref = fft_ref_val
+
+        # LUT handling: only include if LUT checkbox is checked and a path is provided
+        if self.lut_chk.isChecked():
+            lut_path = self.lut_line.text().strip()
+            args.lut = lut_path if lut_path else None
+            args.lut_strength = float(self.lut_strength_spin.value())
+        else:
+            args.lut = None
+            args.lut_strength = 1.0
 
         self.worker = Worker(inpath, outpath, args)
         self.worker.finished.connect(self.on_finished)

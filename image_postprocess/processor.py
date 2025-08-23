@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-image_postprocess_with_camera_pipeline.py
+processor.py
 
 Main pipeline for image postprocessing with an optional realistic camera-pipeline simulator.
-This file retains the original interface for CLI and imports, ensuring compatibility with existing code.
-Imports helper functions and camera pipeline simulation from separate modules.
+Added support for applying 1D PNG/.npy LUTs and .cube 3D LUTs via --lut.
 """
 
 import argparse
@@ -20,8 +19,11 @@ from .utils import (
     randomized_perturbation,
     fourier_match_spectrum,
     auto_white_balance_ref,
+    load_lut,
+    apply_lut,
 )
 from .camera_pipeline import simulate_camera_pipeline
+
 
 def add_fake_exif():
     """
@@ -29,11 +31,9 @@ def add_fake_exif():
     Returns:
         bytes: The EXIF data as a byte string, ready for insertion.
     """
-    # Get current time for timestamp
     now = datetime.now()
     datestamp = now.strftime("%Y:%m:%d %H:%M:%S")
 
-    # Define some plausible fake EXIF tags
     zeroth_ifd = {
         piexif.ImageIFD.Make: b"PurinCamera",
         piexif.ImageIFD.Model: b"Model420X",
@@ -46,17 +46,17 @@ def add_fake_exif():
         piexif.ExifIFD.ExposureTime: (1, 125),  # 1/125s
         piexif.ExifIFD.FNumber: (28, 10),      # F/2.8
         piexif.ExifIFD.ISOSpeedRatings: 200,
-        piexif.ExifIFD.FocalLength: (50, 1),      # 50mm
+        piexif.ExifIFD.FocalLength: (50, 1),    # 50mm
     }
-    gps_ifd = {} # Empty GPS info
+    gps_ifd = {}
 
     exif_dict = {"0th": zeroth_ifd, "Exif": exif_ifd, "GPS": gps_ifd, "1st": {}, "thumbnail": None}
     exif_bytes = piexif.dump(exif_dict)
     return exif_bytes
 
+
 def process_image(path_in, path_out, args):
     img = Image.open(path_in).convert('RGB')
-    # input -> numpy array
     arr = np.array(img)
 
     # --- Auto white-balance using reference (if provided) ---
@@ -105,14 +105,27 @@ def process_image(path_in, path_out, args):
                                        motion_blur_kernel=args.motion_blur_kernel,
                                        seed=args.seed)
 
+    # --- LUT application (optional) ---
+    if args.lut:
+        try:
+            lut = load_lut(args.lut)
+            # Ensure array is uint8 for LUT application
+            arr_uint8 = np.clip(arr, 0, 255).astype(np.uint8)
+            arr_lut = apply_lut(arr_uint8, lut, strength=args.lut_strength)
+            # Ensure output is uint8
+            arr = np.clip(arr_lut, 0, 255).astype(np.uint8)
+        except Exception as e:
+            print(f"Warning: failed to load/apply LUT '{args.lut}': {e}. Skipping LUT.")
+
     out_img = Image.fromarray(arr)
-    
+
     # Generate fake EXIF data and save it with the image
     fake_exif_bytes = add_fake_exif()
     out_img.save(path_out, exif=fake_exif_bytes)
 
+
 def build_argparser():
-    p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation")
+    p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation and LUT support")
     p.add_argument('input', help='Input image path')
     p.add_argument('output', help='Output image path')
     p.add_argument('--ref', help='Optional reference image for auto white-balance (applied before CLAHE)', default=None)
@@ -147,7 +160,12 @@ def build_argparser():
     p.add_argument('--banding-strength', type=float, default=0.0, help='Horizontal banding amplitude (0..1)')
     p.add_argument('--motion-blur-kernel', type=int, default=1, help='Motion blur kernel size (1 = none)')
 
+    # LUT options
+    p.add_argument('--lut', type=str, default=None, help='Path to a 1D PNG (256x1) or .npy LUT, or a .cube 3D LUT')
+    p.add_argument('--lut-strength', type=float, default=1.0, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
+
     return p
+
 
 if __name__ == "__main__":
     args = build_argparser().parse_args()
