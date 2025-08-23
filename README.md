@@ -5,7 +5,7 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 ---
 
 ## Features
-- Select input, optional reference, and output paths with live previews.  
+- Select input, optional auto white-balance reference, optional FFT reference, and output paths with live previews.
 - **Auto Mode**: one slider to control an expressive preset of postprocess parameters.  
 - **Manual Mode**: full access to noise, CLAHE, FFT, phase perturbation, pixel perturbation, etc.  
 - Camera pipeline simulator: Bayer/demosaic, JPEG cycles/quality, vignette, chromatic aberration, motion blur, hot pixels, read-noise, banding.  
@@ -66,13 +66,14 @@ If `image_postprocess` cannot be imported, the GUI will show an error explaining
 
 ## Using the GUI (at-a-glance)
 1. **Choose Input** — opens file dialog; sets suggested output path automatically.  
-2. *(optional)* **Choose Reference** — used for FFT/color reference (OpenCV-based color match supported).  
-3. **Choose Output** — where processed image will be written.  
-4. **Auto Mode** — enable for a single slider to control a bundled preset.  
-5. **Manual Mode** — tune individual parameters in the Parameters group.  
-6. **Camera Simulator** — enable to reveal camera-specific controls (Bayer, JPEG cycles, vignette, chroma, etc.).  
-7. Click **Run — Process Image** to start. The GUI disables controls while running and shows progress.  
-8. When finished, the output preview and Output analysis panel update automatically.
+2. *(optional)* **Choose Reference** — used for FFT/color reference (OpenCV-based color match supported).
+3. *(optional)* **Choose Auto White-Balance Reference** — used for auto white-balance correction (applied before CLAHE).
+4. **Choose Output** — where processed image will be written.  
+5. **Auto Mode** — enable for a single slider to control a bundled preset.  
+6. **Manual Mode** — tune individual parameters in the Parameters group.  
+7. **Camera Simulator** — enable to reveal camera-specific controls (Bayer, JPEG cycles, vignette, chroma, etc.).  
+8. Click **Run — Process Image** to start. The GUI disables controls while running and shows progress.  
+9. When finished, the output preview and Output analysis panel update automatically.
 
 ---
 
@@ -104,6 +105,7 @@ When you click **Run**, the GUI builds a lightweight argument namespace (similar
 - `args.sim_camera` — bool: run camera simulation path  
 - `args.no_no_bayer` — toggles Bayer/demosaic (True = enable RGGB demosaic)  
 - `args.fft_ref` — path to reference image (string) or `None`
+- `args.ref`— path to auto white-balance reference image (string) or `None`
 
 > **Tip:** Your `process_image(inpath, outpath, args)` should be tolerant of missing keys (use `getattr(args, 'name', default)`), or accept the same `SimpleNamespace` object the GUI builds.
 
