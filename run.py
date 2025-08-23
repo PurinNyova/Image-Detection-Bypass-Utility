@@ -258,19 +258,25 @@ class MainWindow(QMainWindow):
         lut_box.setLayout(lut_box_layout)
         lut_box_layout.addWidget(self.lut_line)
         lut_box_layout.addWidget(self.lut_btn)
-        params_layout.addRow("LUT file (png/.npy/.cube)", lut_box)
+        self.lut_file_label = QLabel("LUT file (png/.npy/.cube)")
+        params_layout.addRow(self.lut_file_label, lut_box)
 
         self.lut_strength_spin = QDoubleSpinBox()
         self.lut_strength_spin.setRange(0.0, 1.0)
         self.lut_strength_spin.setSingleStep(0.01)
         self.lut_strength_spin.setValue(1.0)
         self.lut_strength_spin.setToolTip("Blend strength for LUT (0.0 = no effect, 1.0 = full LUT)")
-        params_layout.addRow("LUT strength", self.lut_strength_spin)
+        self.lut_strength_label = QLabel("LUT strength")
+        params_layout.addRow(self.lut_strength_label, self.lut_strength_spin)
 
-        # Initially hide LUT controls
+        # Initially hide LUT controls and their labels
+        self.lut_file_label.setVisible(False)
         lut_box.setVisible(False)
+        self.lut_strength_label.setVisible(False)
         self.lut_strength_spin.setVisible(False)
-        self._lut_controls = (lut_box, self.lut_strength_spin)
+
+        # Store all widgets that need their visibility toggled
+        self._lut_controls = (self.lut_file_label, lut_box, self.lut_strength_label, self.lut_strength_spin)
 
         # Camera simulator collapsible group
         self.camera_box = CollapsibleBox("Camera simulator options")
