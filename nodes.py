@@ -1,20 +1,27 @@
+import torch
 from PIL import Image
 import numpy as np
 import os
 import tempfile
 from types import SimpleNamespace
+from typing import Tuple
 try:
-    from worker import Worker
+    from .image_postprocess import process_image
 except Exception as e:
-    Worker = None
+    process_image = None
     IMPORT_ERROR = str(e)
 else:
     IMPORT_ERROR = None
 
+
 class NovaNodes:
     """
-    ComfyUI node: Full post-processing chain using Worker from GUI
+    ComfyUI node: Full post-processing chain using process_image from image_postprocess
     All augmentations with tunable parameters.
+
+    NOTE: Adjusted to match FOOLAI output:
+      - Returns an IMAGE as a single PyTorch tensor shaped (1, H, W, C), dtype=float32, values in [0.0, 1.0].
+      - Returns EXIF as a STRING (second output slot).
     """
 
     @classmethod
@@ -111,87 +118,160 @@ class NovaNodes:
                 iso_scale=1.0,
                 read_noise=2.0):
 
-        if Worker is None:
-            raise ImportError(f"Could not import Worker module: {IMPORT_ERROR}")
+        if process_image is None:
+            raise ImportError(f"Could not import process_image function: {IMPORT_ERROR}")
 
-        # Ensure input image is a PIL Image
-        if not isinstance(image, Image.Image):
-            raise ValueError("Input image must be a PIL Image object")
+        tmp_files = []
 
-        # Save input image as temporary file
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_input:
-            input_path = tmp_input.name
-            image.save(input_path)
+        def to_pil_from_any(inp):
+            """Convert a torch tensor / numpy array of many shapes into a PIL RGB Image."""
+            # get numpy
+            if isinstance(inp, torch.Tensor):
+                arr = inp.detach().cpu().numpy()
+            else:
+                arr = np.asarray(inp)
 
-        # Prepare reference image if provided
-        ref_path = None
-        if ref_image is not None:
-            if not isinstance(ref_image, Image.Image):
-                raise ValueError("Reference image must be a PIL Image object")
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref:
-                ref_path = tmp_ref.name
-                ref_image.save(ref_path)
+            # remove leading batch dimension if present
+            if arr.ndim == 4 and arr.shape[0] == 1:
+                arr = arr[0]
 
-        # Create output temporary file path
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_output:
-            output_path = tmp_output.name
+            # CHW -> HWC
+            if arr.ndim == 3 and arr.shape[0] in (1, 3):
+                arr = np.transpose(arr, (1, 2, 0))
 
-        # Prepare parameters for Worker
-        args = SimpleNamespace(
-            noise_std=noise_std_frac,
-            hot_pixel_prob=hot_pixel_prob,
-            perturb=perturb_mag_frac,
-            clahe_clip=clahe_clip,
-            tile=clahe_grid,
-            fstrength=fourier_strength,
-            strength=fourier_strength,
-            randomness=fourier_randomness,
-            phase_perturb=fourier_phase_perturb,
-            alpha=fourier_alpha,
-            radial_smooth=fourier_radial_smooth,
-            fft_mode=fourier_mode,
-            vignette_strength=vignette_strength,
-            chroma_strength=ca_shift,
-            banding_strength=1.0 if apply_banding_o else 0.0,
-            motion_blur_kernel=motion_blur_ksize,
-            jpeg_cycles=jpeg_cycles,
-            jpeg_qmin=jpeg_quality,
-            jpeg_qmax=jpeg_quality,
-            sim_camera=sim_camera,
-            no_no_bayer=enable_bayer,
-            iso_scale=iso_scale,
-            read_noise=read_noise,
-            ref=ref_path,
-            fft_ref=ref_path,
-            seed=None,  # Seed handling can be added if Worker supports it
-            cutoff=0.25  # Default value from GUI, adjustable if needed
-        )
+            # if still 3D and last dim is channel (H,W,C) but C==1 or 3: OK
+            if arr.ndim == 2:
+                # grayscale HxW -> make HxWx1
+                arr = arr[:, :, None]
 
-        # Run Worker
-        worker = Worker(input_path, output_path, args)
-        worker.run()  # Assuming Worker has a synchronous run() method
+            # Now arr should be H x W x C
+            if arr.ndim != 3:
+                # try permutations heuristically (rare)
+                for perm in [(1, 2, 0), (2, 0, 1), (0, 2, 1)]:
+                    try:
+                        cand = np.transpose(arr, perm)
+                        if cand.ndim == 3:
+                            arr = cand
+                            break
+                    except Exception:
+                        pass
 
-        # Load output image
-        output_img = Image.open(output_path)
+            if arr.ndim != 3:
+                raise TypeError(f"Cannot convert array to HWC image, final ndim={arr.ndim}, shape={arr.shape}")
 
-        # Handle EXIF
-        new_exif = ""
-        if apply_exif_o:
-            output_img, new_exif = self._add_fake_exif(output_img)
+            # Normalize numeric range to 0..255 uint8
+            if np.issubdtype(arr.dtype, np.floating):
+                # assume floats are 0..1 if max <= 1.0
+                if arr.max() <= 1.0:
+                    arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+                else:
+                    arr = np.clip(arr, 0, 255).astype(np.uint8)
+            else:
+                arr = arr.astype(np.uint8)
 
-        # Clean up temporary files
-        os.unlink(input_path)
-        if ref_path:
-            os.unlink(ref_path)
-        os.unlink(output_path)
+            # If single channel, replicate to 3 channels (we want RGB files)
+            if arr.shape[2] == 1:
+                arr = np.repeat(arr, 3, axis=2)
 
-        return (output_img, new_exif)
+            # finally create PIL
+            return Image.fromarray(arr)
 
-    def _add_fake_exif(self, img: Image.Image) -> tuple[Image.Image, str]:
+        try:
+            # ---- Input image -> temporary input file ----
+            pil_img = to_pil_from_any(image[0])
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_input:
+                input_path = tmp_input.name
+                pil_img.save(input_path)
+                tmp_files.append(input_path)
+
+            # ---- Reference image if present ----
+            ref_path = None
+            if ref_image is not None:
+                pil_ref = to_pil_from_any(ref_image[0])
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref:
+                    ref_path = tmp_ref.name
+                    pil_ref.save(ref_path)
+                    tmp_files.append(ref_path)
+
+            # ---- Output path ----
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_output:
+                output_path = tmp_output.name
+                tmp_files.append(output_path)
+
+            # Prepare args for process_image (keeping your names)
+            args = SimpleNamespace(
+                input=input_path,
+                output=output_path,
+                ref=ref_path,
+                noise_std=noise_std_frac,
+                hot_pixel_prob=hot_pixel_prob,
+                perturb=perturb_mag_frac,
+                clahe_clip=clahe_clip,
+                tile=clahe_grid,
+                fstrength=fourier_strength if apply_fourier_o else 0.0,
+                randomness=fourier_randomness,
+                phase_perturb=fourier_phase_perturb,
+                fft_alpha=fourier_alpha,
+                radial_smooth=fourier_radial_smooth,
+                fft_mode=fourier_mode,
+                fft_ref=ref_path,
+                vignette_strength=vignette_strength if apply_vignette_o else 0.0,
+                chroma_strength=ca_shift if apply_chromatic_aberration_o else 0.0,
+                banding_strength=1.0 if apply_banding_o else 0.0,
+                motion_blur_kernel=motion_blur_ksize if apply_motion_blur_o else 1,
+                jpeg_cycles=jpeg_cycles if apply_jpeg_cycles_o else 1,
+                jpeg_qmin=jpeg_quality,
+                jpeg_qmax=jpeg_quality,
+                sim_camera=sim_camera,
+                no_no_bayer=enable_bayer,
+                iso_scale=iso_scale,
+                read_noise=read_noise,
+                seed=None,
+                cutoff=0.25
+            )
+
+            # ---- Run the processing function ----
+            process_image(input_path, output_path, args)
+
+            # ---- Load result (force RGB to avoid unexpected single-channel shapes) ----
+            output_img = Image.open(output_path).convert("RGB")
+            img_out = np.array(output_img)  # H x W x 3, uint8
+
+            # ---- EXIF insertion (optional) ----
+            new_exif = ""
+            if apply_exif_o:
+                try:
+                    output_img_with_exif, new_exif = self._add_fake_exif(output_img)
+                    output_img = output_img_with_exif
+                    img_out = np.array(output_img.convert("RGB"))
+                except Exception:
+                    new_exif = ""
+
+            # ---- Convert to FOOLAI-style tensor: (1, H, W, C), float32 in [0,1] ----
+            img_float = img_out.astype(np.float32) / 255.0  # H x W x C
+            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)  # 1 x H x W x C
+            tensor_out = torch.clamp(tensor_out, 0.0, 1.0)
+
+            # Return the same format FOOLAI uses: (tensor, exif_string)
+            return (tensor_out, new_exif)
+
+        finally:
+            for p in tmp_files:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+
+    def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:
         """Insert random but realistic camera EXIF metadata."""
         import random
         import io
-        import piexif
+        try:
+            import piexif
+        except Exception:
+            raise
+
         exif_dict = {
             "0th": {
                 piexif.ImageIFD.Make: random.choice(["Canon", "Nikon", "Sony", "Fujifilm", "Olympus", "Leica"]),
@@ -212,6 +292,7 @@ class NovaNodes:
         img.save(output, format="JPEG", exif=exif_bytes)
         output.seek(0)
         return (Image.open(output), str(exif_bytes))
+
 
 # -------------
 #  Registration
