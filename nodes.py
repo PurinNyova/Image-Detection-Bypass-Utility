@@ -22,6 +22,10 @@ class NovaNodes:
     NOTE: Adjusted to match FOOLAI output:
       - Returns an IMAGE as a single PyTorch tensor shaped (1, H, W, C), dtype=float32, values in [0.0, 1.0].
       - Returns EXIF as a STRING (second output slot).
+
+    Added LUT support: two new node inputs:
+      - lut: STRING path to a LUT file (1D PNG 256x1, .npy, or .cube). Empty string -> disabled.
+      - lut_strength: FLOAT blend strength (0.0..1.0)
     """
 
     @classmethod
@@ -77,6 +81,10 @@ class NovaNodes:
                 "enable_bayer": ("BOOLEAN", {"default": True}),
                 "iso_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.1}),
                 "read_noise": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 50.0, "step": 0.1}),
+
+                # LUT (new)
+                "lut": ("STRING", {"default": ""}),
+                "lut_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
                 "ref_image": ("IMAGE",),
@@ -116,7 +124,9 @@ class NovaNodes:
                 sim_camera=False,
                 enable_bayer=True,
                 iso_scale=1.0,
-                read_noise=2.0):
+                read_noise=2.0,
+                lut="",
+                lut_strength=1.0):
 
         if process_image is None:
             raise ImportError(f"Could not import process_image function: {IMPORT_ERROR}")
@@ -227,7 +237,10 @@ class NovaNodes:
                 iso_scale=iso_scale,
                 read_noise=read_noise,
                 seed=None,
-                cutoff=0.25
+                cutoff=0.25,
+                # LUT fields (new)
+                lut=(lut if lut != "" else None),
+                lut_strength=lut_strength,
             )
 
             # ---- Run the processing function ----
