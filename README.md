@@ -57,7 +57,7 @@ pip install -r requirements.txt
 Save the GUI script (for example) as `image_postprocess_gui.py` (or use the existing name `image_postprocess_gui_with_analysis_updated.py`) and run:
 
 ```bash
-python3 image_postprocess_gui.py
+python run.py
 ```
 
 If `image_postprocess` cannot be imported, the GUI will show an error explaining the import failure (see **Troubleshooting** below).
