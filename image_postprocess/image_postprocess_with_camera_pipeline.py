@@ -19,7 +19,7 @@ from .utils import (
     clahe_color_correction,
     randomized_perturbation,
     fourier_match_spectrum,
-    auto_white_balance_ref,  # <-- new import
+    auto_white_balance_ref,
 )
 from .camera_pipeline import simulate_camera_pipeline
 

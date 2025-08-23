@@ -184,7 +184,7 @@ class NovaNodes:
                 pil_img.save(input_path)
                 tmp_files.append(input_path)
 
-            # ---- Reference image if present ----
+            # ---- Reference image for AWB and FFT if present ----
             ref_path = None
             if ref_image is not None:
                 pil_ref = to_pil_from_any(ref_image[0])
@@ -202,7 +202,7 @@ class NovaNodes:
             args = SimpleNamespace(
                 input=input_path,
                 output=output_path,
-                ref=ref_path,
+                ref=ref_path,  # Used for AWB if provided
                 noise_std=noise_std_frac,
                 hot_pixel_prob=hot_pixel_prob,
                 perturb=perturb_mag_frac,
@@ -214,7 +214,7 @@ class NovaNodes:
                 fft_alpha=fourier_alpha,
                 radial_smooth=fourier_radial_smooth,
                 fft_mode=fourier_mode,
-                fft_ref=ref_path,
+                fft_ref=ref_path,  # Used for FFT if provided
                 vignette_strength=vignette_strength if apply_vignette_o else 0.0,
                 chroma_strength=ca_shift if apply_chromatic_aberration_o else 0.0,
                 banding_strength=1.0 if apply_banding_o else 0.0,
@@ -261,7 +261,6 @@ class NovaNodes:
                     os.unlink(p)
                 except Exception:
                     pass
-
 
     def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:
         """Insert random but realistic camera EXIF metadata."""
