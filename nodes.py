@@ -87,6 +87,8 @@ class NovaNodes:
                 "read_noise": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 50.0, "step": 0.1}),
 
                 # LUT
+                # --- CHANGE 1: Added enable_lut toggle ---
+                "enable_lut": ("BOOLEAN", {"default": False}),
                 "lut": ("STRING", {"default": "X://insert/path/here.npy", "vhs_path_extensions": lut_extensions}),
                 "lut_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
@@ -131,6 +133,8 @@ class NovaNodes:
                 enable_bayer=True,
                 iso_scale=1.0,
                 read_noise=2.0,
+                # --- CHANGE 2: Added enable_lut to the function signature ---
+                enable_lut=False,
                 lut="",
                 lut_strength=1.0):
 
@@ -226,7 +230,8 @@ class NovaNodes:
                 read_noise=read_noise,
                 seed=None,
                 cutoff=0.25,
-                lut=(lut if lut != "" else None),
+                # --- CHANGE 3: Updated logic to check enable_lut toggle ---
+                lut=(lut if enable_lut and lut != "" else None),
                 lut_strength=lut_strength,
             )
 
