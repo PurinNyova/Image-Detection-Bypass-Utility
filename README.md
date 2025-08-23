@@ -4,6 +4,9 @@ A polished PyQt5 GUI for the `image_postprocess` pipeline that adds live preview
 
 ---
 
+## Screenshot
+![Screenshot](https://i.imgur.com/Jp9U8Rm.png)
+
 ## Features
 - Select input, optional auto white-balance reference, optional FFT reference, and output paths with live previews.
 - **Auto Mode**: one slider to control an expressive preset of postprocess parameters.  
