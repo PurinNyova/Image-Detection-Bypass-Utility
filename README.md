@@ -54,7 +54,6 @@ pip install -r requirements.txt
 - `utils.py` — must provide `qpixmap_from_path(path, max_size=(w,h))`.
 
 ### Run
-Save the GUI script (for example) as `image_postprocess_gui.py` (or use the existing name `image_postprocess_gui_with_analysis_updated.py`) and run:
 
 ```bash
 python run.py
