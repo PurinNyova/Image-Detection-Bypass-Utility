@@ -59,14 +59,20 @@ def process_image(path_in, path_out, args):
     img = Image.open(path_in).convert('RGB')
     arr = np.array(img)
 
-    # --- Auto white-balance using reference (if provided) ---
-    if args.ref:
-        try:
-            ref_img_awb = Image.open(args.ref).convert('RGB')
-            ref_arr_awb = np.array(ref_img_awb)
-            arr = auto_white_balance_ref(arr, ref_arr_awb)
-        except Exception as e:
-            print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
+    # --- Auto white-balance (if enabled) ---
+    if args.awb:
+        if args.ref:
+            try:
+                ref_img_awb = Image.open(args.ref).convert('RGB')
+                ref_arr_awb = np.array(ref_img_awb)
+                arr = auto_white_balance_ref(arr, ref_arr_awb)
+            except Exception as e:
+                print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
+        else:
+            print("Applying AWB using grey-world assumption...")
+            # Assuming auto_white_balance_ref with a None reference
+            # triggers the grey-world algorithm as described.
+            arr = auto_white_balance_ref(arr, None)
 
     # apply CLAHE color correction (contrast)
     arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
@@ -128,7 +134,11 @@ def build_argparser():
     p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation and LUT support")
     p.add_argument('input', help='Input image path')
     p.add_argument('output', help='Output image path')
-    p.add_argument('--ref', help='Optional reference image for auto white-balance (applied before CLAHE)', default=None)
+
+    # AWB Options
+    p.add_argument('--awb', action='store_true', help='Enable automatic white balancing. Uses grey-world if --ref is not provided.')
+    p.add_argument('--ref', help='Optional reference image for auto white-balance (only used if --awb is enabled)', default=None)
+    
     p.add_argument('--noise-std', type=float, default=0.02, help='Gaussian noise std fraction of 255 (0-0.1)')
     p.add_argument('--clahe-clip', type=float, default=2.0, help='CLAHE clip limit')
     p.add_argument('--tile', type=int, default=8, help='CLAHE tile grid size')

@@ -13,6 +13,7 @@ except Exception as e:
 else:
     IMPORT_ERROR = None
 
+lut_extensions = ['png','npy','cube']
 
 class NovaNodes:
     """
@@ -33,6 +34,9 @@ class NovaNodes:
         return {
             "required": {
                 "image": ("IMAGE",),
+
+                # AWB
+                "enable_awb": ("BOOLEAN", {"default": False}),
 
                 # EXIF
                 "apply_exif_o": ("BOOLEAN", {"default": True}),
@@ -63,9 +67,9 @@ class NovaNodes:
                 "apply_chromatic_aberration_o": ("BOOLEAN", {"default": True}),
                 "ca_shift": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1}),
 
-                # Banding
+                # Banding (FIXED)
                 "apply_banding_o": ("BOOLEAN", {"default": True}),
-                "banding_levels": ("INT", {"default": 64, "min": 2, "max": 256, "step": 1}),
+                "banding_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
 
                 # Motion blur
                 "apply_motion_blur_o": ("BOOLEAN", {"default": True}),
@@ -82,12 +86,13 @@ class NovaNodes:
                 "iso_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.1}),
                 "read_noise": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 50.0, "step": 0.1}),
 
-                # LUT (new)
-                "lut": ("STRING", {"default": ""}),
+                # LUT
+                "lut": ("STRING", {"default": "X://insert/path/here.npy", "vhs_path_extensions": lut_extensions}),
                 "lut_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
-                "ref_image": ("IMAGE",),
+                "awb_ref_image": ("IMAGE",),
+                "fft_ref_image": ("IMAGE",),
             }
         }
 
@@ -96,7 +101,8 @@ class NovaNodes:
     FUNCTION = "process"
     CATEGORY = "postprocessing"
 
-    def process(self, image, ref_image=None,
+    def process(self, image, awb_ref_image=None, fft_ref_image=None,
+                enable_awb=False,
                 apply_exif_o=True,
                 noise_std_frac=0.015,
                 hot_pixel_prob=1e-6,
@@ -115,7 +121,7 @@ class NovaNodes:
                 apply_chromatic_aberration_o=True,
                 ca_shift=1.0,
                 apply_banding_o=True,
-                banding_levels=64,
+                banding_strength=0.5,
                 apply_motion_blur_o=True,
                 motion_blur_ksize=7,
                 apply_jpeg_cycles_o=True,
@@ -135,55 +141,27 @@ class NovaNodes:
 
         def to_pil_from_any(inp):
             """Convert a torch tensor / numpy array of many shapes into a PIL RGB Image."""
-            # get numpy
             if isinstance(inp, torch.Tensor):
                 arr = inp.detach().cpu().numpy()
             else:
                 arr = np.asarray(inp)
-
-            # remove leading batch dimension if present
             if arr.ndim == 4 and arr.shape[0] == 1:
                 arr = arr[0]
-
-            # CHW -> HWC
             if arr.ndim == 3 and arr.shape[0] in (1, 3):
                 arr = np.transpose(arr, (1, 2, 0))
-
-            # if still 3D and last dim is channel (H,W,C) but C==1 or 3: OK
             if arr.ndim == 2:
-                # grayscale HxW -> make HxWx1
                 arr = arr[:, :, None]
-
-            # Now arr should be H x W x C
-            if arr.ndim != 3:
-                # try permutations heuristically (rare)
-                for perm in [(1, 2, 0), (2, 0, 1), (0, 2, 1)]:
-                    try:
-                        cand = np.transpose(arr, perm)
-                        if cand.ndim == 3:
-                            arr = cand
-                            break
-                    except Exception:
-                        pass
-
             if arr.ndim != 3:
                 raise TypeError(f"Cannot convert array to HWC image, final ndim={arr.ndim}, shape={arr.shape}")
-
-            # Normalize numeric range to 0..255 uint8
             if np.issubdtype(arr.dtype, np.floating):
-                # assume floats are 0..1 if max <= 1.0
                 if arr.max() <= 1.0:
                     arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
                 else:
                     arr = np.clip(arr, 0, 255).astype(np.uint8)
             else:
                 arr = arr.astype(np.uint8)
-
-            # If single channel, replicate to 3 channels (we want RGB files)
             if arr.shape[2] == 1:
                 arr = np.repeat(arr, 3, axis=2)
-
-            # finally create PIL
             return Image.fromarray(arr)
 
         try:
@@ -194,25 +172,35 @@ class NovaNodes:
                 pil_img.save(input_path)
                 tmp_files.append(input_path)
 
-            # ---- Reference image for AWB and FFT if present ----
-            ref_path = None
-            if ref_image is not None:
-                pil_ref = to_pil_from_any(ref_image[0])
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref:
-                    ref_path = tmp_ref.name
-                    pil_ref.save(ref_path)
-                    tmp_files.append(ref_path)
+            # ---- AWB reference image if present ----
+            awb_ref_path = None
+            if awb_ref_image is not None:
+                pil_ref_awb = to_pil_from_any(awb_ref_image[0])
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref_awb:
+                    awb_ref_path = tmp_ref_awb.name
+                    pil_ref_awb.save(awb_ref_path)
+                    tmp_files.append(awb_ref_path)
+
+            # ---- FFT reference image if present ----
+            fft_ref_path = None
+            if fft_ref_image is not None:
+                pil_ref_fft = to_pil_from_any(fft_ref_image[0])
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref_fft:
+                    fft_ref_path = tmp_ref_fft.name
+                    pil_ref_fft.save(fft_ref_path)
+                    tmp_files.append(fft_ref_path)
 
             # ---- Output path ----
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_output:
                 output_path = tmp_output.name
                 tmp_files.append(output_path)
 
-            # Prepare args for process_image (keeping your names)
+            # Prepare args for process_image
             args = SimpleNamespace(
                 input=input_path,
                 output=output_path,
-                ref=ref_path,  # Used for AWB if provided
+                awb=enable_awb, # Explicit AWB flag
+                ref=awb_ref_path,
                 noise_std=noise_std_frac,
                 hot_pixel_prob=hot_pixel_prob,
                 perturb=perturb_mag_frac,
@@ -224,21 +212,20 @@ class NovaNodes:
                 fft_alpha=fourier_alpha,
                 radial_smooth=fourier_radial_smooth,
                 fft_mode=fourier_mode,
-                fft_ref=ref_path,  # Used for FFT if provided
+                fft_ref=fft_ref_path,
                 vignette_strength=vignette_strength if apply_vignette_o else 0.0,
                 chroma_strength=ca_shift if apply_chromatic_aberration_o else 0.0,
-                banding_strength=1.0 if apply_banding_o else 0.0,
+                banding_strength=banding_strength if apply_banding_o else 0.0,
                 motion_blur_kernel=motion_blur_ksize if apply_motion_blur_o else 1,
                 jpeg_cycles=jpeg_cycles if apply_jpeg_cycles_o else 1,
                 jpeg_qmin=jpeg_quality,
                 jpeg_qmax=jpeg_quality,
                 sim_camera=sim_camera,
-                no_no_bayer=enable_bayer,
+                no_no_bayer=not enable_bayer, # FIX: Inverted logic corrected
                 iso_scale=iso_scale,
                 read_noise=read_noise,
                 seed=None,
                 cutoff=0.25,
-                # LUT fields (new)
                 lut=(lut if lut != "" else None),
                 lut_strength=lut_strength,
             )
@@ -246,9 +233,9 @@ class NovaNodes:
             # ---- Run the processing function ----
             process_image(input_path, output_path, args)
 
-            # ---- Load result (force RGB to avoid unexpected single-channel shapes) ----
+            # ---- Load result (force RGB) ----
             output_img = Image.open(output_path).convert("RGB")
-            img_out = np.array(output_img)  # H x W x 3, uint8
+            img_out = np.array(output_img)
 
             # ---- EXIF insertion (optional) ----
             new_exif = ""
@@ -261,11 +248,10 @@ class NovaNodes:
                     new_exif = ""
 
             # ---- Convert to FOOLAI-style tensor: (1, H, W, C), float32 in [0,1] ----
-            img_float = img_out.astype(np.float32) / 255.0  # H x W x C
-            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)  # 1 x H x W x C
+            img_float = img_out.astype(np.float32) / 255.0
+            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)
             tensor_out = torch.clamp(tensor_out, 0.0, 1.0)
 
-            # Return the same format FOOLAI uses: (tensor, exif_string)
             return (tensor_out, new_exif)
 
         finally:

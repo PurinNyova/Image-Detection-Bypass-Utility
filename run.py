@@ -515,11 +515,13 @@ class MainWindow(QMainWindow):
             args.banding_strength = float(self.banding_spin.value())
             args.motion_blur_kernel = int(self.motion_blur_spin.value())
 
-        # AWB handling: only apply if checkbox is checked
+        # AWB handling to match the new --awb flag in the backend
         if self.awb_chk.isChecked():
-            args.ref = awb_ref_val  # may be None -> the pipeline will fall back to gray-world
+            args.awb = True
+            args.ref = awb_ref_val  # This can be the path or None (for grey-world)
         else:
-            args.ref = None
+            args.awb = False
+            args.ref = None # Not strictly necessary as backend ignores it, but good practice
 
         # FFT spectral matching reference
         args.fft_ref = fft_ref_val
