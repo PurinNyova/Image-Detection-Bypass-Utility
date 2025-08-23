@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""""
+"""
 Main GUI application for image_postprocess pipeline with camera-simulator controls.
-"""""
+Dark/gray modern theme and collapsible option sections.
+"""
 
 import sys
 import os
@@ -9,10 +10,10 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog,
     QHBoxLayout, QVBoxLayout, QFormLayout, QSlider, QSpinBox, QDoubleSpinBox,
-    QProgressBar, QMessageBox, QGroupBox, QLineEdit, QComboBox, QCheckBox
+    QProgressBar, QMessageBox, QLineEdit, QComboBox, QCheckBox, QToolButton
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QPalette, QColor
 from worker import Worker
 from analysis_panel import AnalysisPanel
 from utils import qpixmap_from_path
@@ -25,10 +26,38 @@ except Exception as e:
 else:
     IMPORT_ERROR = None
 
+
+class CollapsibleBox(QWidget):
+    """A simple collapsible container widget with a chevron arrow."""
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+        self.toggle = QToolButton(text=title, checkable=True, checked=True)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(Qt.DownArrow)
+        self.toggle.clicked.connect(self.on_toggled)
+        self.toggle.setStyleSheet("QToolButton { border: none; font-weight:600; padding:6px; }")
+
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout()
+        self.content_layout.setContentsMargins(8, 4, 8, 8)
+        self.content.setLayout(self.content_layout)
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(0)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.toggle)
+        lay.addWidget(self.content)
+
+    def on_toggled(self):
+        checked = self.toggle.isChecked()
+        self.toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+        self.content.setVisible(checked)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Image Postprocess — GUI (with Camera Simulator)")
+        self.setWindowTitle("Image Postprocess — GUI (Camera Simulator)")
         self.setMinimumSize(1200, 760)
 
         central = QWidget()
@@ -39,34 +68,44 @@ class MainWindow(QMainWindow):
         left_v = QVBoxLayout()
         main_h.addLayout(left_v, 2)
 
-        in_group = QGroupBox("Input / Output")
-        left_v.addWidget(in_group)
+        # Input/Output collapsible
+        io_box = CollapsibleBox("Input / Output")
+        left_v.addWidget(io_box)
         in_layout = QFormLayout()
-        in_group.setLayout(in_layout)
+        io_container = QWidget()
+        io_container.setLayout(in_layout)
+        io_box.content_layout.addWidget(io_container)
 
         self.input_line = QLineEdit()
         self.input_btn = QPushButton("Choose Input")
         self.input_btn.clicked.connect(self.choose_input)
+
         self.ref_line = QLineEdit()
-        self.ref_btn = QPushButton("Choose Reference (optional)")
+        self.ref_btn = QPushButton("Choose AWB Reference (optional)")
         self.ref_btn.clicked.connect(self.choose_ref)
+
+        self.fft_ref_line = QLineEdit()
+        self.fft_ref_btn = QPushButton("Choose FFT Reference (optional)")
+        self.fft_ref_btn.clicked.connect(self.choose_fft_ref)
+
         self.output_line = QLineEdit()
         self.output_btn = QPushButton("Choose Output")
         self.output_btn.clicked.connect(self.choose_output)
 
         in_layout.addRow(self.input_btn, self.input_line)
         in_layout.addRow(self.ref_btn, self.ref_line)
+        in_layout.addRow(self.fft_ref_btn, self.fft_ref_line)
         in_layout.addRow(self.output_btn, self.output_line)
 
         # Previews
         self.preview_in = QLabel(alignment=Qt.AlignCenter)
         self.preview_in.setFixedSize(480, 300)
-        self.preview_in.setStyleSheet("background:#111; border:1px solid #444; color:#ddd")
+        self.preview_in.setStyleSheet("background:#121213; border:1px solid #2b2b2b; color:#ddd; border-radius:6px")
         self.preview_in.setText("Input preview")
 
         self.preview_out = QLabel(alignment=Qt.AlignCenter)
         self.preview_out.setFixedSize(480, 300)
-        self.preview_out.setStyleSheet("background:#111; border:1px solid #444; color:#ddd")
+        self.preview_out.setStyleSheet("background:#121213; border:1px solid #2b2b2b; color:#ddd; border-radius:6px")
         self.preview_out.setText("Output preview")
 
         left_v.addWidget(self.preview_in)
@@ -92,16 +131,20 @@ class MainWindow(QMainWindow):
         right_v = QVBoxLayout()
         main_h.addLayout(right_v, 3)
 
-        # Auto Mode controls
+        # Auto Mode toggle (keeps top-level quick switch visible)
         self.auto_mode_chk = QCheckBox("Enable Auto Mode")
         self.auto_mode_chk.setChecked(False)
         self.auto_mode_chk.stateChanged.connect(self._on_auto_mode_toggled)
         right_v.addWidget(self.auto_mode_chk)
 
-        self.auto_group = QGroupBox("Auto Mode")
+        # Make Auto Mode section collapsible
+        self.auto_box = CollapsibleBox("Auto Mode")
+        right_v.addWidget(self.auto_box)
         auto_layout = QFormLayout()
-        self.auto_group.setLayout(auto_layout)
-        
+        auto_container = QWidget()
+        auto_container.setLayout(auto_layout)
+        self.auto_box.content_layout.addWidget(auto_container)
+
         strength_layout = QHBoxLayout()
         self.strength_slider = QSlider(Qt.Horizontal)
         self.strength_slider.setRange(0, 100)
@@ -113,12 +156,14 @@ class MainWindow(QMainWindow):
         strength_layout.addWidget(self.strength_label)
 
         auto_layout.addRow("Aberration Strength", strength_layout)
-        right_v.addWidget(self.auto_group)
 
-        self.params_group = QGroupBox("Parameters (Manual Mode)")
-        right_v.addWidget(self.params_group)
+        # Parameters (Manual Mode) collapsible
+        self.params_box = CollapsibleBox("Parameters (Manual Mode)")
+        right_v.addWidget(self.params_box)
         params_layout = QFormLayout()
-        self.params_group.setLayout(params_layout)
+        params_container = QWidget()
+        params_container.setLayout(params_layout)
+        self.params_box.content_layout.addWidget(params_container)
 
         # Noise-std
         self.noise_spin = QDoubleSpinBox()
@@ -203,16 +248,25 @@ class MainWindow(QMainWindow):
         self.seed_spin.setValue(0)
         params_layout.addRow("Seed (0=none)", self.seed_spin)
 
+        # AWB checkbox (new)
+        self.awb_chk = QCheckBox("Enable auto white-balance (AWB)")
+        self.awb_chk.setChecked(False)
+        self.awb_chk.setToolTip("If checked, AWB is applied. If a reference image is chosen, it will be used; otherwise gray-world AWB is applied.")
+        params_layout.addRow(self.awb_chk)
+
         # Camera simulator toggle
         self.sim_camera_chk = QCheckBox("Enable camera pipeline simulation")
         self.sim_camera_chk.setChecked(False)
         self.sim_camera_chk.stateChanged.connect(self._on_sim_camera_toggled)
         params_layout.addRow(self.sim_camera_chk)
 
-        # Camera simulator group
-        self.camera_group = QGroupBox("Camera simulator options")
+        # Camera simulator collapsible group
+        self.camera_box = CollapsibleBox("Camera simulator options")
+        right_v.addWidget(self.camera_box)
         cam_layout = QFormLayout()
-        self.camera_group.setLayout(cam_layout)
+        cam_container = QWidget()
+        cam_container.setLayout(cam_layout)
+        self.camera_box.content_layout.addWidget(cam_container)
 
         # Enable bayer
         self.bayer_chk = QCheckBox("Enable Bayer / demosaic (RGGB)")
@@ -287,12 +341,9 @@ class MainWindow(QMainWindow):
         self.motion_blur_spin.setValue(1)
         cam_layout.addRow("Motion blur kernel", self.motion_blur_spin)
 
-        self.camera_group.setVisible(False)
-        right_v.addWidget(self.camera_group)
+        self.camera_box.setVisible(False)
 
-        params_layout.addRow(self.camera_group)
-
-        self.ref_hint = QLabel("Reference color matching supported by OpenCV only.")
+        self.ref_hint = QLabel("AWB uses the 'AWB reference' chooser. FFT spectral matching uses the 'FFT Reference' chooser.")
         right_v.addWidget(self.ref_hint)
 
         self.analysis_input = AnalysisPanel(title="Input analysis")
@@ -315,12 +366,12 @@ class MainWindow(QMainWindow):
 
     def _on_sim_camera_toggled(self, state):
         enabled = state == Qt.Checked
-        self.camera_group.setVisible(enabled)
+        self.camera_box.setVisible(enabled)
 
     def _on_auto_mode_toggled(self, state):
         is_auto = (state == Qt.Checked)
-        self.auto_group.setVisible(is_auto)
-        self.params_group.setVisible(not is_auto)
+        self.auto_box.setVisible(is_auto)
+        self.params_box.setVisible(not is_auto)
 
     def _update_strength_label(self, value):
         self.strength_label.setText(str(value))
@@ -336,9 +387,14 @@ class MainWindow(QMainWindow):
                 self.output_line.setText(out_suggest)
 
     def choose_ref(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choose reference image", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.tif)")
+        path, _ = QFileDialog.getOpenFileName(self, "Choose AWB reference image", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.tif)")
         if path:
             self.ref_line.setText(path)
+
+    def choose_fft_ref(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose FFT reference image", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.tif)")
+        if path:
+            self.fft_ref_line.setText(path)
 
     def choose_output(self):
         path, _ = QFileDialog.getSaveFileName(self, "Choose output path", str(Path.home()), "JPEG (*.jpg *.jpeg);;PNG (*.png);;TIFF (*.tif)")
@@ -354,7 +410,7 @@ class MainWindow(QMainWindow):
         widget.setPixmap(pix)
 
     def set_enabled_all(self, enabled: bool):
-        for w in self.findChildren((QPushButton, QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QCheckBox, QSlider)):
+        for w in self.findChildren((QPushButton, QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QCheckBox, QSlider, QToolButton)):
             w.setEnabled(enabled)
 
     def on_run(self):
@@ -368,7 +424,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing output", "Please choose an output path.")
             return
 
-        ref_val = self.ref_line.text() or None
+        awb_ref_val = self.ref_line.text() or None
+        fft_ref_val = self.fft_ref_line.text() or None
         args = SimpleNamespace()
 
         if self.auto_mode_chk.isChecked():
@@ -430,8 +487,14 @@ class MainWindow(QMainWindow):
             args.banding_strength = float(self.banding_spin.value())
             args.motion_blur_kernel = int(self.motion_blur_spin.value())
 
-        args.ref = None
-        args.fft_ref = ref_val
+        # AWB handling: only apply if checkbox is checked
+        if self.awb_chk.isChecked():
+            args.ref = awb_ref_val  # may be None -> the pipeline will fall back to gray-world
+        else:
+            args.ref = None
+
+        # FFT spectral matching reference
+        args.fft_ref = fft_ref_val
 
         self.worker = Worker(inpath, outpath, args)
         self.worker.finished.connect(self.on_finished)
@@ -455,7 +518,7 @@ class MainWindow(QMainWindow):
         self.set_enabled_all(True)
 
     def on_error(self, msg, traceback_text):
-        from PyQt5.QtWidgets import QDialog, QTextEdit, QVBoxLayout
+        from PyQt5.QtWidgets import QDialog, QTextEdit
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.status.setText("Error")
@@ -498,13 +561,47 @@ class MainWindow(QMainWindow):
         else:
             os.system(f'xdg-open "{folder}"')
 
+
+def apply_dark_palette(app: QApplication):
+    pal = QPalette()
+    # base
+    pal.setColor(QPalette.Window, QColor(18, 18, 19))
+    pal.setColor(QPalette.WindowText, QColor(220, 220, 220))
+    pal.setColor(QPalette.Base, QColor(28, 28, 30))
+    pal.setColor(QPalette.AlternateBase, QColor(24, 24, 26))
+    pal.setColor(QPalette.ToolTipBase, QColor(220, 220, 220))
+    pal.setColor(QPalette.ToolTipText, QColor(220, 220, 220))
+    pal.setColor(QPalette.Text, QColor(230, 230, 230))
+    pal.setColor(QPalette.Button, QColor(40, 40, 42))
+    pal.setColor(QPalette.ButtonText, QColor(230, 230, 230))
+    pal.setColor(QPalette.Highlight, QColor(70, 130, 180))
+    pal.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    app.setPalette(pal)
+
+    # global stylesheet for a modern gray look
+    app.setStyleSheet(r"""
+        QWidget { font-family: 'Segoe UI', Roboto, Arial, sans-serif; font-size:11pt }
+        QToolButton { padding:6px; }
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: #1e1e1f; border: 1px solid #333; padding:4px; border-radius:6px }
+        QPushButton { background: #2a2a2c; border: 1px solid #3a3a3c; padding:6px 10px; border-radius:8px }
+        QPushButton:hover { background: #333336 }
+        QPushButton:pressed { background: #232325 }
+        QProgressBar { background: #222; border: 1px solid #333; border-radius:6px; text-align:center }
+        QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4b9bd6, stop:1 #3b83c0); }
+        QLabel { color: #d6d6d6 }
+        QCheckBox { padding:4px }
+    """)
+
+
 def main():
     app = QApplication([])
+    apply_dark_palette(app)
     if IMPORT_ERROR:
         QMessageBox.critical(None, "Import error", "Could not import image_postprocess module:\n" + IMPORT_ERROR)
     w = MainWindow()
     w.show()
     sys.exit(app.exec_())
+
 
 if __name__ == '__main__':
     main()

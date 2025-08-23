@@ -14,8 +14,13 @@ import numpy as np
 import piexif
 from datetime import datetime
 
-
-from .utils import add_gaussian_noise, clahe_color_correction, randomized_perturbation, fourier_match_spectrum
+from .utils import (
+    add_gaussian_noise,
+    clahe_color_correction,
+    randomized_perturbation,
+    fourier_match_spectrum,
+    auto_white_balance_ref,  # <-- new import
+)
 from .camera_pipeline import simulate_camera_pipeline
 
 def add_fake_exif():
@@ -51,18 +56,32 @@ def add_fake_exif():
 
 def process_image(path_in, path_out, args):
     img = Image.open(path_in).convert('RGB')
-    # img = remove_exif_pil(img) # <-- This line is removed
-
+    # input -> numpy array
     arr = np.array(img)
 
+    # --- Auto white-balance using reference (if provided) ---
+    if args.ref:
+        try:
+            ref_img_awb = Image.open(args.ref).convert('RGB')
+            ref_arr_awb = np.array(ref_img_awb)
+            arr = auto_white_balance_ref(arr, ref_arr_awb)
+        except Exception as e:
+            print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
+
+    # apply CLAHE color correction (contrast)
     arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
 
-    ref_arr = None
+    # FFT spectral matching reference (separate flag: --fft-ref)
+    ref_arr_fft = None
     if args.fft_ref:
-        ref_img = Image.open(args.fft_ref).convert('RGB')
-        ref_arr = np.array(ref_img)
+        try:
+            ref_img_fft = Image.open(args.fft_ref).convert('RGB')
+            ref_arr_fft = np.array(ref_img_fft)
+        except Exception as e:
+            print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
+            ref_arr_fft = None
 
-    arr = fourier_match_spectrum(arr, ref_img_arr=ref_arr, mode=args.fft_mode,
+    arr = fourier_match_spectrum(arr, ref_img_arr=ref_arr_fft, mode=args.fft_mode,
                                  alpha=args.fft_alpha, cutoff=args.cutoff,
                                  strength=args.fstrength, randomness=args.randomness,
                                  phase_perturb=args.phase_perturb, radial_smooth=args.radial_smooth,
@@ -96,7 +115,7 @@ def build_argparser():
     p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation")
     p.add_argument('input', help='Input image path')
     p.add_argument('output', help='Output image path')
-    p.add_argument('--ref', help='Optional reference image for color matching (not implemented)', default=None)
+    p.add_argument('--ref', help='Optional reference image for auto white-balance (applied before CLAHE)', default=None)
     p.add_argument('--noise-std', type=float, default=0.02, help='Gaussian noise std fraction of 255 (0-0.1)')
     p.add_argument('--clahe-clip', type=float, default=2.0, help='CLAHE clip limit')
     p.add_argument('--tile', type=int, default=8, help='CLAHE tile grid size')
