@@ -172,7 +172,7 @@ def build_argparser():
 
     # LUT options
     p.add_argument('--lut', type=str, default=None, help='Path to a 1D PNG (256x1) or .npy LUT, or a .cube 3D LUT')
-    p.add_argument('--lut-strength', type=float, default=1.0, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
+    p.add_argument('--lut-strength', type=float, default=0.1, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
 
     return p
 
