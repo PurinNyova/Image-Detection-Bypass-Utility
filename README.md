@@ -19,8 +19,6 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 
 ## Parameter Explanation
 
-Got it. Here’s a clean **README-style explanation** for the parameters shown in your screenshot, written in a way that’s suitable for GitHub documentation:
-
 ---
 
 ## Manual Parameters
