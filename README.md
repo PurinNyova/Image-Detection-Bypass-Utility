@@ -132,8 +132,6 @@ pip install -r requirements.txt
 python run.py
 ```
 
-If `image_postprocess` cannot be imported, the GUI will show an error explaining the import failure (see **Troubleshooting** below).
-
 ---
 
 ## Using the GUI (at-a-glance)
