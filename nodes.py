@@ -20,13 +20,12 @@ class NovaNodes:
     ComfyUI node: Full post-processing chain using process_image from image_postprocess
     All augmentations with tunable parameters.
 
-    NOTE: Adjusted to match FOOLAI output:
-      - Returns an IMAGE as a single PyTorch tensor shaped (1, H, W, C), dtype=float32, values in [0.0, 1.0].
-      - Returns EXIF as a STRING (second output slot).
-
     Added LUT support: two new node inputs:
       - lut: STRING path to a LUT file (1D PNG 256x1, .npy, or .cube). Empty string -> disabled.
       - lut_strength: FLOAT blend strength (0.0..1.0)
+
+    Added GLCM / LBP options (mapped from CLI-style args). GLCM/LBP list-like inputs accept
+    comma- or space-separated strings (e.g. "1,2" or "1 2") from the UI and are parsed to lists.
     """
 
     @classmethod
@@ -36,7 +35,7 @@ class NovaNodes:
             "required": {
                 "image": ("IMAGE",),
 
-                # Parameters (Manual Mode) - Order and defaults match the image
+                # Parameters
                 "noise_std_frac": ("FLOAT", {"default": 0.02, "min": 0.0, "max": 0.1, "step": 0.001}),
                 "clahe_clip": ("FLOAT", {"default": 2.00, "min": 0.5, "max": 10.0, "step": 0.1}),
                 "clahe_grid": ("INT", {"default": 8, "min": 2, "max": 32, "step": 1}),
@@ -54,7 +53,17 @@ class NovaNodes:
                 "enable_lut": ("BOOLEAN", {"default": True}),
                 "lut": ("STRING", {"default": "X://insert/path/here(.png/.npy/.cube)", "vhs_path_extensions": lut_extensions}),
                 "lut_strength": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
-                
+                "glcm": ("BOOLEAN", {"default": False}),
+                "glcm_distances": ("STRING", {"default": "1"}),
+                "glcm_angles": ("STRING", {"default": f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}"}),
+                "glcm_levels": ("INT", {"default": 256, "min": 2, "max": 65536, "step": 1}),
+                "glcm_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "lbp": ("BOOLEAN", {"default": False}),
+                "lbp_radius": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
+                "lbp_n_points": ("INT", {"default": 24, "min": 1, "max": 512, "step": 1}),
+                "lbp_method": (["default", "ror", "uniform", "var"], {"default": "uniform"}),
+                "lbp_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+
                 # Camera simulator options - Order and defaults match the image
                 "enable_bayer": ("BOOLEAN", {"default": True}),
                 "apply_jpeg_cycles_o": ("BOOLEAN", {"default": True}),
@@ -71,7 +80,7 @@ class NovaNodes:
                 "banding_strength": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "apply_motion_blur_o": ("BOOLEAN", {"default": True}),
                 "motion_blur_ksize": ("INT", {"default": 1, "min": 1, "max": 31, "step": 2}),
-                
+
                 # Other options
                 "apply_exif_o": ("BOOLEAN", {"default": True}),
             },
@@ -86,7 +95,7 @@ class NovaNodes:
     FUNCTION = "process"
     CATEGORY = "postprocessing"
 
-    def process(self, image, 
+    def process(self, image,
                 noise_std_frac=0.02,
                 clahe_clip=2.0,
                 clahe_grid=8,
@@ -104,6 +113,16 @@ class NovaNodes:
                 enable_lut=True,
                 lut="",
                 lut_strength=1.0,
+                glcm=False,
+                glcm_distances="1",
+                glcm_angles=f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}",
+                glcm_levels=256,
+                glcm_strength=0.9,
+                lbp=False,
+                lbp_radius=3,
+                lbp_n_points=24,
+                lbp_method="uniform",
+                lbp_strength=0.9,
                 enable_bayer=True,
                 apply_jpeg_cycles_o=True,
                 jpeg_cycles=1,
@@ -120,7 +139,7 @@ class NovaNodes:
                 apply_motion_blur_o=True,
                 motion_blur_ksize=1,
                 apply_exif_o=True,
-                awb_ref_image=None, 
+                awb_ref_image=None,
                 fft_ref_image=None
                 ):
 
@@ -154,6 +173,29 @@ class NovaNodes:
                 arr = np.repeat(arr, 3, axis=2)
             return Image.fromarray(arr)
 
+        # utility parsers for list-like UI inputs
+        def _parse_int_list(val):
+            if isinstance(val, (list, tuple)):
+                return [int(x) for x in val]
+            if isinstance(val, (int, np.integer)):
+                return [int(val)]
+            s = str(val).strip()
+            if s == "":
+                return []
+            parts = [p for p in s.replace(',', ' ').split() if p != ""]
+            return [int(p) for p in parts]
+
+        def _parse_float_list(val):
+            if isinstance(val, (list, tuple)):
+                return [float(x) for x in val]
+            if isinstance(val, (float, int, np.floating, np.integer)):
+                return [float(val)]
+            s = str(val).strip()
+            if s == "":
+                return []
+            parts = [p for p in s.replace(',', ' ').split() if p != ""]
+            return [float(p) for p in parts]
+
         try:
             # ---- Input image -> temporary input file ----
             pil_img = to_pil_from_any(image[0])
@@ -184,6 +226,10 @@ class NovaNodes:
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_output:
                 output_path = tmp_output.name
                 tmp_files.append(output_path)
+
+            # Parse list-like UI inputs into native lists
+            parsed_glcm_distances = _parse_int_list(glcm_distances)
+            parsed_glcm_angles = _parse_float_list(glcm_angles)
 
             # Prepare args for process_image
             args = SimpleNamespace(
@@ -218,6 +264,19 @@ class NovaNodes:
                 cutoff=fourier_cutoff,
                 lut=(lut if enable_lut and lut != "" else None),
                 lut_strength=lut_strength,
+
+                # New GLCM/LBP args
+                glcm=bool(glcm),
+                glcm_distances=parsed_glcm_distances,
+                glcm_angles=parsed_glcm_angles,
+                glcm_levels=int(glcm_levels),
+                glcm_strength=float(glcm_strength),
+
+                lbp=bool(lbp),
+                lbp_radius=int(lbp_radius),
+                lbp_n_points=int(lbp_n_points),
+                lbp_method=str(lbp_method),
+                lbp_strength=float(lbp_strength),
             )
 
             # ---- Run the processing function ----
