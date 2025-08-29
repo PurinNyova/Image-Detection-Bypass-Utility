@@ -19,11 +19,12 @@ from analysis_panel import AnalysisPanel
 from utils import qpixmap_from_path
 from collapsible_box import CollapsibleBox
 from theme import apply_dark_palette
+import numpy as np
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Image Postprocess — GUI (Camera Simulator)")
+        self.setWindowTitle("Image Detection Bypass Utility V1.2")
         self.setMinimumSize(1200, 760)
 
         central = QWidget()
@@ -103,13 +104,13 @@ class MainWindow(QMainWindow):
         right_v = QVBoxLayout(scroll_widget)
         scroll_area.setWidget(scroll_widget)
 
-        # Auto Mode toggle (keeps top-level quick switch visible)
+        # Auto Mode toggle
         self.auto_mode_chk = QCheckBox("Enable Auto Mode")
         self.auto_mode_chk.setChecked(False)
         self.auto_mode_chk.stateChanged.connect(self._on_auto_mode_toggled)
         right_v.addWidget(self.auto_mode_chk)
 
-        # Make Auto Mode section collapsible
+        # Auto Mode section collapsible
         self.auto_box = CollapsibleBox("Auto Mode")
         right_v.addWidget(self.auto_box)
         auto_layout = QFormLayout()
@@ -232,14 +233,13 @@ class MainWindow(QMainWindow):
         self.sim_camera_chk.stateChanged.connect(self._on_sim_camera_toggled)
         params_layout.addRow(self.sim_camera_chk)
 
-        # --- LUT support UI ---
+        # LUT support UI
         self.lut_chk = QCheckBox("Enable LUT")
         self.lut_chk.setChecked(False)
         self.lut_chk.setToolTip("Enable applying a 1D/.npy/.cube LUT to the output image")
         self.lut_chk.stateChanged.connect(self._on_lut_toggled)
         params_layout.addRow(self.lut_chk)
 
-        # LUT chooser (hidden until checkbox checked)
         self.lut_line = QLineEdit()
         self.lut_btn = QPushButton("Choose LUT")
         self.lut_btn.clicked.connect(self.choose_lut)
@@ -268,6 +268,80 @@ class MainWindow(QMainWindow):
 
         # Store all widgets that need their visibility toggled
         self._lut_controls = (self.lut_file_label, lut_box, self.lut_strength_label, self.lut_strength_spin)
+
+        # Texture Normalization collapsible group
+        self.texture_box = CollapsibleBox("Texture Normalization")
+        right_v.addWidget(self.texture_box)
+        texture_layout = QFormLayout()
+        texture_container = QWidget()
+        texture_container.setLayout(texture_layout)
+        self.texture_box.content_layout.addWidget(texture_container)
+
+        # GLCM checkbox
+        self.glcm_chk = QCheckBox("Enable GLCM Normalization")
+        self.glcm_chk.setChecked(False)
+        self.glcm_chk.setToolTip("Enable GLCM normalization using FFT reference image")
+        texture_layout.addRow(self.glcm_chk)
+
+        # GLCM distances
+        self.glcm_distances_line = QLineEdit("1")
+        self.glcm_distances_line.setToolTip("Space-separated list of distances for GLCM computation (e.g., '1 2 3')")
+        texture_layout.addRow("GLCM Distances", self.glcm_distances_line)
+
+        # GLCM angles
+        self.glcm_angles_line = QLineEdit("0 0.785 1.571 2.356")
+        self.glcm_angles_line.setToolTip("Space-separated list of angles in radians for GLCM (e.g., '0 0.785 1.571 2.356')")
+        texture_layout.addRow("GLCM Angles (rad)", self.glcm_angles_line)
+
+        # GLCM levels
+        self.glcm_levels_spin = QSpinBox()
+        self.glcm_levels_spin.setRange(2, 256)
+        self.glcm_levels_spin.setValue(256)
+        self.glcm_levels_spin.setToolTip("Number of gray levels for GLCM")
+        texture_layout.addRow("GLCM Levels", self.glcm_levels_spin)
+
+        # GLCM strength
+        self.glcm_strength_spin = QDoubleSpinBox()
+        self.glcm_strength_spin.setRange(0.0, 1.0)
+        self.glcm_strength_spin.setSingleStep(0.01)
+        self.glcm_strength_spin.setValue(0.9)
+        self.glcm_strength_spin.setToolTip("Strength of GLCM feature matching (0.0 = no effect, 1.0 = full effect)")
+        texture_layout.addRow("GLCM Strength", self.glcm_strength_spin)
+
+        # LBP checkbox
+        self.lbp_chk = QCheckBox("Enable LBP Normalization")
+        self.lbp_chk.setChecked(False)
+        self.lbp_chk.setToolTip("Enable LBP normalization using FFT reference image")
+        texture_layout.addRow(self.lbp_chk)
+
+        # LBP radius
+        self.lbp_radius_spin = QSpinBox()
+        self.lbp_radius_spin.setRange(1, 10)
+        self.lbp_radius_spin.setValue(3)
+        self.lbp_radius_spin.setToolTip("Radius of LBP operator")
+        texture_layout.addRow("LBP Radius", self.lbp_radius_spin)
+
+        # LBP n_points
+        self.lbp_n_points_spin = QSpinBox()
+        self.lbp_n_points_spin.setRange(8, 64)
+        self.lbp_n_points_spin.setValue(24)
+        self.lbp_n_points_spin.setToolTip("Number of circularly symmetric neighbor set points for LBP")
+        texture_layout.addRow("LBP N Points", self.lbp_n_points_spin)
+
+        # LBP method
+        self.lbp_method_combo = QComboBox()
+        self.lbp_method_combo.addItems(["default", "ror", "uniform", "var"])
+        self.lbp_method_combo.setCurrentText("uniform")
+        self.lbp_method_combo.setToolTip("LBP method: default, ror, uniform, or var")
+        texture_layout.addRow("LBP Method", self.lbp_method_combo)
+
+        # LBP strength
+        self.lbp_strength_spin = QDoubleSpinBox()
+        self.lbp_strength_spin.setRange(0.0, 1.0)
+        self.lbp_strength_spin.setSingleStep(0.01)
+        self.lbp_strength_spin.setValue(0.9)
+        self.lbp_strength_spin.setToolTip("Strength of LBP histogram matching (0.0 = no effect, 1.0 = full effect)")
+        texture_layout.addRow("LBP Strength", self.lbp_strength_spin)
 
         # Camera simulator collapsible group
         self.camera_box = CollapsibleBox("Camera simulator options")
@@ -381,6 +455,7 @@ class MainWindow(QMainWindow):
         is_auto = (state == Qt.Checked)
         self.auto_box.setVisible(is_auto)
         self.params_box.setVisible(not is_auto)
+        self.texture_box.setVisible(not is_auto)
 
     def _update_strength_label(self, value):
         self.strength_label.setText(str(value))
@@ -468,6 +543,16 @@ class MainWindow(QMainWindow):
             args.fft_mode = "auto"
             args.fft_alpha = 1.0
             args.alpha = 1.0
+            args.glcm = False
+            args.glcm_distances = [1]
+            args.glcm_angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]
+            args.glcm_levels = 256
+            args.glcm_strength = 0.9
+            args.lbp = False
+            args.lbp_radius = 3
+            args.lbp_n_points = 24
+            args.lbp_method = "uniform"
+            args.lbp_strength = 0.9
             seed_val = int(self.seed_spin.value())
             args.seed = None if seed_val == 0 else seed_val
             args.sim_camera = bool(self.sim_camera_chk.isChecked())
@@ -505,11 +590,21 @@ class MainWindow(QMainWindow):
             args.hot_pixel_prob = float(self.hot_pixel_spin.value())
             args.banding_strength = float(self.banding_spin.value())
             args.motion_blur_kernel = int(self.motion_blur_spin.value())
+            args.glcm = bool(self.glcm_chk.isChecked())
+            args.glcm_distances = [int(x) for x in self.glcm_distances_line.text().split()]
+            args.glcm_angles = [float(x) for x in self.glcm_angles_line.text().split()]
+            args.glcm_levels = int(self.glcm_levels_spin.value())
+            args.glcm_strength = float(self.glcm_strength_spin.value())
+            args.lbp = bool(self.lbp_chk.isChecked())
+            args.lbp_radius = int(self.lbp_radius_spin.value())
+            args.lbp_n_points = int(self.lbp_n_points_spin.value())
+            args.lbp_method = self.lbp_method_combo.currentText()
+            args.lbp_strength = float(self.lbp_strength_spin.value())
 
-        # AWB handling to match the new --awb flag in the backend
+        # AWB handling
         if self.awb_chk.isChecked():
             args.awb = True
-            args.ref = awb_ref_val  # This can be the path or None (for grey-world)
+            args.ref = awb_ref_val
         else:
             args.awb = False
             args.ref = None
@@ -517,7 +612,7 @@ class MainWindow(QMainWindow):
         # FFT spectral matching reference
         args.fft_ref = fft_ref_val
 
-        # LUT handling: only include if LUT checkbox is checked and a path is provided
+        # LUT handling
         if self.lut_chk.isChecked():
             lut_path = self.lut_line.text().strip()
             args.lut = lut_path if lut_path else None
@@ -588,5 +683,3 @@ class MainWindow(QMainWindow):
             os.system(f'open "{folder}"')
         elif os.name == 'nt':
             os.startfile(folder)
-        else:
-            os.system(f'xdg-open "{folder}"')

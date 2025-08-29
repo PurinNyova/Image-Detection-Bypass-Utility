@@ -27,6 +27,8 @@ def apply_dark_palette(app: QApplication):
         QPushButton:pressed { background: #232325 }
         QProgressBar { background: #222; border: 1px solid #333; border-radius:6px; text-align:center }
         QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4b9bd6, stop:1 #3b83c0); }
-        QLabel { color: #d6d6d6 }
+        QLabel { color: #ffffff }
         QCheckBox { padding:4px }
+        QGroupBox { color : #e6e6e6; }
+        QGroupBox:title { color : #e6e6e6; }
     """)

@@ -4,6 +4,7 @@ processor.py
 
 Main pipeline for image postprocessing with an optional realistic camera-pipeline simulator.
 Added support for applying 1D PNG/.npy LUTs and .cube 3D LUTs via --lut.
+Added GLCM and LBP normalization using the same reference as FFT.
 """
 
 import argparse
@@ -21,6 +22,8 @@ from .utils import (
     auto_white_balance_ref,
     load_lut,
     apply_lut,
+    glcm_normalize,
+    lbp_normalize,
 )
 from .camera_pipeline import simulate_camera_pipeline
 
@@ -70,8 +73,6 @@ def process_image(path_in, path_out, args):
                 print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
         else:
             print("Applying AWB using grey-world assumption...")
-            # Assuming auto_white_balance_ref with a None reference
-            # triggers the grey-world algorithm as described.
             arr = auto_white_balance_ref(arr, None)
 
     # apply CLAHE color correction (contrast)
@@ -92,6 +93,18 @@ def process_image(path_in, path_out, args):
                                  strength=args.fstrength, randomness=args.randomness,
                                  phase_perturb=args.phase_perturb, radial_smooth=args.radial_smooth,
                                  seed=args.seed)
+
+    # GLCM normalization (if enabled)
+    if args.glcm:
+        arr = glcm_normalize(arr, ref_img_arr=ref_arr_fft, distances=args.glcm_distances,
+                             angles=args.glcm_angles, levels=args.glcm_levels,
+                             strength=args.glcm_strength, seed=args.seed)
+
+    # LBP normalization (if enabled)
+    if args.lbp:
+        arr = lbp_normalize(arr, ref_img_arr=ref_arr_fft, radius=args.lbp_radius,
+                            n_points=args.lbp_n_points, method=args.lbp_method,
+                            strength=args.lbp_strength, seed=args.seed)
 
     arr = add_gaussian_noise(arr, std_frac=args.noise_std, seed=args.seed)
     arr = randomized_perturbation(arr, magnitude_frac=args.perturb, seed=args.seed)
@@ -115,10 +128,8 @@ def process_image(path_in, path_out, args):
     if args.lut:
         try:
             lut = load_lut(args.lut)
-            # Ensure array is uint8 for LUT application
             arr_uint8 = np.clip(arr, 0, 255).astype(np.uint8)
             arr_lut = apply_lut(arr_uint8, lut, strength=args.lut_strength)
-            # Ensure output is uint8
             arr = np.clip(arr_lut, 0, 255).astype(np.uint8)
         except Exception as e:
             print(f"Warning: failed to load/apply LUT '{args.lut}': {e}. Skipping LUT.")
@@ -131,7 +142,7 @@ def process_image(path_in, path_out, args):
 
 
 def build_argparser():
-    p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation and LUT support")
+    p = argparse.ArgumentParser(description="Image postprocessing pipeline with camera simulation, LUT support, GLCM, and LBP normalization")
     p.add_argument('input', help='Input image path')
     p.add_argument('output', help='Output image path')
 
@@ -149,11 +160,25 @@ def build_argparser():
     p.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
 
     # FFT-matching options
-    p.add_argument('--fft-ref', help='Optional reference image for FFT spectral matching', default=None)
+    p.add_argument('--fft-ref', help='Optional reference image for FFT spectral matching, GLCM, and LBP', default=None)
     p.add_argument('--fft-mode', choices=('auto','ref','model'), default='auto', help='FFT mode: auto picks ref if available')
     p.add_argument('--fft-alpha', type=float, default=1.0, help='Alpha for 1/f model (spectrum slope)')
     p.add_argument('--phase-perturb', type=float, default=0.08, help='Phase perturbation strength (radians)')
     p.add_argument('--radial-smooth', type=int, default=5, help='Radial smoothing (bins) for spectrum profiles')
+
+    # GLCM normalization options
+    p.add_argument('--glcm', action='store_true', help='Enable GLCM normalization using fft-ref image')
+    p.add_argument('--glcm-distances', type=int, nargs='+', default=[1], help='Distances for GLCM computation')
+    p.add_argument('--glcm-angles', type=float, nargs='+', default=[0, np.pi/4, np.pi/2, 3*np.pi/4], help='Angles for GLCM computation (in radians)')
+    p.add_argument('--glcm-levels', type=int, default=256, help='Number of gray levels for GLCM')
+    p.add_argument('--glcm-strength', type=float, default=0.9, help='Strength of GLCM feature matching (0..1)')
+
+    # LBP normalization options
+    p.add_argument('--lbp', action='store_true', help='Enable LBP normalization using fft-ref image')
+    p.add_argument('--lbp-radius', type=int, default=3, help='Radius of LBP operator')
+    p.add_argument('--lbp-n-points', type=int, default=24, help='Number of circularly symmetric neighbor set points for LBP')
+    p.add_argument('--lbp-method', choices=('default', 'ror', 'uniform', 'var'), default='uniform', help='LBP method')
+    p.add_argument('--lbp-strength', type=float, default=0.9, help='Strength of LBP histogram matching (0..1)')
 
     # Camera-simulator options
     p.add_argument('--sim-camera', action='store_true', help='Enable camera-pipeline simulation (Bayer, CA, vignette, JPEG cycles)')
