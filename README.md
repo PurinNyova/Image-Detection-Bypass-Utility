@@ -174,8 +174,13 @@ Thanks to u/Race88 for the help on the ComfyUI code.
 
 ```bash
 pip install pyqt5 pillow numpy matplotlib piexif
-# optional but recommended for color matching / some functionality:
+# optional but recommended for extra functionality:
 pip install opencv-python
+# optional but needed for AI Normalizer (Install CPU OR Cuda)
+#Torch Cuda 12.6
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#Torch CPU
+pip install torch torchvision
 
 ```
 
