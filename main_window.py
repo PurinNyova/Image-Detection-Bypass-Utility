@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
         self.ref_btn.clicked.connect(self.choose_ref)
 
         self.fft_ref_line = QLineEdit()
-        self.fft_ref_btn = QPushButton("Choose FFT Reference (optional)")
+        self.fft_ref_btn = QPushButton("Choose Reference (FFT, GLCM, LBP) (Optional)")
         self.fft_ref_btn.clicked.connect(self.choose_fft_ref)
 
         self.output_line = QLineEdit()
@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         self.auto_mode_chk.setChecked(False)
         self.auto_mode_chk.stateChanged.connect(self._on_auto_mode_toggled)
         right_v.addWidget(self.auto_mode_chk)
-
+        
         # Auto Mode section collapsible
         self.auto_box = CollapsibleBox("Auto Mode")
         right_v.addWidget(self.auto_box)
@@ -130,6 +130,73 @@ class MainWindow(QMainWindow):
 
         auto_layout.addRow("Aberration Strength", strength_layout)
 
+        # AI Normalizer
+        self.ai_norm_box = CollapsibleBox("AI Normalizer")
+        right_v.addWidget(self.ai_norm_box)
+        ai_layout = QFormLayout()
+        ai_container = QWidget()
+        ai_container.setLayout(ai_layout)
+        self.ai_norm_box.content_layout.addWidget(ai_container)
+
+        self.ns_chk = QCheckBox("Enable AI Normalizer (Torch Required)")
+        self.ns_chk.setToolTip("Enable AI Normalizer. Requires PyTorch.")
+        self.ns_chk.setChecked(False)
+        ai_layout.addRow(self.ns_chk)
+
+        self.ns_iterations_spin = QSpinBox()
+        self.ns_iterations_spin.setRange(1, 10000)
+        self.ns_iterations_spin.setValue(500)
+        self.ns_iterations_spin.setToolTip("Number of iterations for the AI Normalizer optimization.")
+        ai_layout.addRow("Iterations", self.ns_iterations_spin)
+
+        self.ns_lr_spin = QDoubleSpinBox()
+        self.ns_lr_spin.setDecimals(6)
+        self.ns_lr_spin.setRange(0.000001, 0.1)
+        self.ns_lr_spin.setSingleStep(0.0001)
+        self.ns_lr_spin.setValue(0.0003)
+        self.ns_lr_spin.setToolTip("Learning rate for the AI Normalizer optimization.")
+        ai_layout.addRow("Learning Rate", self.ns_lr_spin)
+
+        self.ns_t_lpips_spin = QDoubleSpinBox()
+        self.ns_t_lpips_spin.setDecimals(6)
+        self.ns_t_lpips_spin.setRange(0.000001, 1.0)
+        self.ns_t_lpips_spin.setSingleStep(0.0001)
+        self.ns_t_lpips_spin.setValue(0.04)
+        self.ns_t_lpips_spin.setToolTip("Temporally weighted LPIPS loss parameter.")
+        ai_layout.addRow("T LPIPS", self.ns_t_lpips_spin)
+
+        self.ns_t_l2_spin = QDoubleSpinBox()
+        self.ns_t_l2_spin.setDecimals(6)
+        self.ns_t_l2_spin.setRange(0.000001, 1.0)
+        self.ns_t_l2_spin.setSingleStep(0.00001)
+        self.ns_t_l2_spin.setValue(3e-05)
+        self.ns_t_l2_spin.setToolTip("Temporally weighted L2 loss parameter.")
+        ai_layout.addRow("T L2", self.ns_t_l2_spin)
+
+        self.ns_c_lpips_spin = QDoubleSpinBox()
+        self.ns_c_lpips_spin.setDecimals(6)
+        self.ns_c_lpips_spin.setRange(0.000001, 1.0)
+        self.ns_c_lpips_spin.setSingleStep(0.0001)
+        self.ns_c_lpips_spin.setValue(0.01)
+        self.ns_c_lpips_spin.setToolTip("Content loss LPIPS weight.")
+        ai_layout.addRow("C LPIPS", self.ns_c_lpips_spin)
+
+        self.ns_c_l2_spin = QDoubleSpinBox()
+        self.ns_c_l2_spin.setDecimals(6)
+        self.ns_c_l2_spin.setRange(0.000001, 10.0)
+        self.ns_c_l2_spin.setSingleStep(0.01)
+        self.ns_c_l2_spin.setValue(0.6)
+        self.ns_c_l2_spin.setToolTip("Content loss L2 weight.")
+        ai_layout.addRow("C L2", self.ns_c_l2_spin)
+
+        self.ns_grad_clip_spin = QDoubleSpinBox()
+        self.ns_grad_clip_spin.setDecimals(6)
+        self.ns_grad_clip_spin.setRange(0.000001, 1.0)
+        self.ns_grad_clip_spin.setSingleStep(0.0001)
+        self.ns_grad_clip_spin.setValue(0.05)
+        self.ns_grad_clip_spin.setToolTip("Gradient clipping threshold to stabilize training.")
+        ai_layout.addRow("Gradient Clip", self.ns_grad_clip_spin)
+
         # Parameters (Manual Mode) collapsible
         self.params_box = CollapsibleBox("Parameters (Manual Mode)")
         right_v.addWidget(self.params_box)
@@ -137,6 +204,23 @@ class MainWindow(QMainWindow):
         params_container = QWidget()
         params_container.setLayout(params_layout)
         self.params_box.content_layout.addWidget(params_container)
+
+        # New optional flags for processing steps
+        self.noise_enable_chk = QCheckBox("Enable Gaussian Noise")
+        self.noise_enable_chk.setChecked(True)
+        params_layout.addRow(self.noise_enable_chk)
+
+        self.clahe_enable_chk = QCheckBox("Enable CLAHE Color Correction")
+        self.clahe_enable_chk.setChecked(True)
+        params_layout.addRow(self.clahe_enable_chk)
+
+        self.fft_enable_chk = QCheckBox("Enable FFT Spectral Matching")
+        self.fft_enable_chk.setChecked(True)
+        params_layout.addRow(self.fft_enable_chk)
+
+        self.perturb_enable_chk = QCheckBox("Enable Randomized Perturbation")
+        self.perturb_enable_chk.setChecked(True)
+        params_layout.addRow(self.perturb_enable_chk)
 
         # Noise-std
         self.noise_spin = QDoubleSpinBox()
@@ -529,7 +613,9 @@ class MainWindow(QMainWindow):
             args.cutoff = max(0.01, 0.4 - strength * 0.3)
             args.fstrength = strength * 0.95
             args.phase_perturb = strength * 0.1
-            args.perturb = strength * 0.015
+            # Update perturb: now separate flag and magnitude
+            args.perturb = True
+            args.perturb_magnitude = strength * 0.015
             args.jpeg_cycles = int(strength * 2)
             args.jpeg_qmin = max(1, int(95 - strength * 35))
             args.jpeg_qmax = max(1, int(99 - strength * 25))
@@ -573,7 +659,6 @@ class MainWindow(QMainWindow):
             args.strength = float(self.fstrength_spin.value())
             args.randomness = float(self.randomness_spin.value())
             args.phase_perturb = float(self.phase_perturb_spin.value())
-            args.perturb = float(self.perturb_spin.value())
             args.fft_mode = self.fft_mode_combo.currentText()
             args.fft_alpha = float(self.fft_alpha_spin.value())
             args.alpha = float(self.fft_alpha_spin.value())
@@ -600,6 +685,29 @@ class MainWindow(QMainWindow):
             args.lbp_n_points = int(self.lbp_n_points_spin.value())
             args.lbp_method = self.lbp_method_combo.currentText()
             args.lbp_strength = float(self.lbp_strength_spin.value())
+            # Set the new optional processing flags based on checkboxes
+            args.noise = self.noise_enable_chk.isChecked()
+            args.clahe = self.clahe_enable_chk.isChecked()
+            args.fft = self.fft_enable_chk.isChecked()
+            args.perturb = self.perturb_enable_chk.isChecked()
+            args.perturb_magnitude = float(self.perturb_spin.value())
+
+        # AI Normalizer
+        args.non_semantic = bool(self.ns_chk.isChecked())
+        if args.non_semantic:
+            try:
+                import torch
+            except ImportError:
+                QMessageBox.warning(self, "Missing Dependency", "Torch (PyTorch) is required for AI Normalizer but is not installed.")
+                self.set_enabled_all(True)
+                return
+            args.ns_iterations = int(self.ns_iterations_spin.value())
+            args.ns_learning_rate = float(self.ns_lr_spin.value())
+            args.ns_t_lpips = float(self.ns_t_lpips_spin.value())
+            args.ns_t_l2 = float(self.ns_t_l2_spin.value())
+            args.ns_c_lpips = float(self.ns_c_lpips_spin.value())
+            args.ns_c_l2 = float(self.ns_c_l2_spin.value())
+            args.ns_grad_clip = float(self.ns_grad_clip_spin.value())
 
         # AWB handling
         if self.awb_chk.isChecked():

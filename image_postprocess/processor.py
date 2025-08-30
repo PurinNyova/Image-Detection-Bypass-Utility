@@ -24,6 +24,7 @@ from .utils import (
     apply_lut,
     glcm_normalize,
     lbp_normalize,
+    attack_non_semantic
 )
 from .camera_pipeline import simulate_camera_pipeline
 
@@ -62,6 +63,33 @@ def process_image(path_in, path_out, args):
     img = Image.open(path_in).convert('RGB')
     arr = np.array(img)
 
+    # Load FFT reference independently (used for FFT, GLCM, and LBP)
+    ref_arr_fft = None
+    if args.fft_ref:
+        try:
+            ref_img_fft = Image.open(args.fft_ref).convert('RGB')
+            ref_arr_fft = np.array(ref_img_fft)
+        except Exception as e:
+            print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
+            ref_arr_fft = None
+
+    # --- Non-semantic attack (if enabled) executed first ---
+    if args.non_semantic:
+        print("Applying non-semantic attack...")
+        try:
+            arr = attack_non_semantic(
+                arr,
+                iterations=args.ns_iterations,
+                learning_rate=args.ns_learning_rate,
+                t_lpips=args.ns_t_lpips,
+                t_l2=args.ns_t_l2,
+                c_lpips=args.ns_c_lpips,
+                c_l2=args.ns_c_l2,
+                grad_clip_value=args.ns_grad_clip
+            )
+        except Exception as e:
+            print(f"Warning: Non-semantic attack failed: {e}. Skipping non-semantic attack.")
+
     # --- Auto white-balance (if enabled) ---
     if args.awb:
         if args.ref:
@@ -75,39 +103,37 @@ def process_image(path_in, path_out, args):
             print("Applying AWB using grey-world assumption...")
             arr = auto_white_balance_ref(arr, None)
 
-    # apply CLAHE color correction (contrast)
-    arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
+    # --- CLAHE color correction (if enabled) ---
+    if args.clahe:
+        arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
 
-    # FFT spectral matching reference (separate flag: --fft-ref)
-    ref_arr_fft = None
-    if args.fft_ref:
-        try:
-            ref_img_fft = Image.open(args.fft_ref).convert('RGB')
-            ref_arr_fft = np.array(ref_img_fft)
-        except Exception as e:
-            print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
-            ref_arr_fft = None
+    # --- FFT spectral matching (if enabled) ---
+    if args.fft:
+        arr = fourier_match_spectrum(arr, ref_img_arr=ref_arr_fft, mode=args.fft_mode,
+                                     alpha=args.fft_alpha, cutoff=args.cutoff,
+                                     strength=args.fstrength, randomness=args.randomness,
+                                     phase_perturb=args.phase_perturb, radial_smooth=args.radial_smooth,
+                                     seed=args.seed)
 
-    arr = fourier_match_spectrum(arr, ref_img_arr=ref_arr_fft, mode=args.fft_mode,
-                                 alpha=args.fft_alpha, cutoff=args.cutoff,
-                                 strength=args.fstrength, randomness=args.randomness,
-                                 phase_perturb=args.phase_perturb, radial_smooth=args.radial_smooth,
-                                 seed=args.seed)
-
-    # GLCM normalization (if enabled)
+    # GLCM normalization
     if args.glcm:
         arr = glcm_normalize(arr, ref_img_arr=ref_arr_fft, distances=args.glcm_distances,
                              angles=args.glcm_angles, levels=args.glcm_levels,
                              strength=args.glcm_strength, seed=args.seed)
 
-    # LBP normalization (if enabled)
+    # LBP normalization
     if args.lbp:
         arr = lbp_normalize(arr, ref_img_arr=ref_arr_fft, radius=args.lbp_radius,
                             n_points=args.lbp_n_points, method=args.lbp_method,
                             strength=args.lbp_strength, seed=args.seed)
 
-    arr = add_gaussian_noise(arr, std_frac=args.noise_std, seed=args.seed)
-    arr = randomized_perturbation(arr, magnitude_frac=args.perturb, seed=args.seed)
+    # Gaussian noise addition
+    if args.noise:
+        arr = add_gaussian_noise(arr, std_frac=args.noise_std, seed=args.seed)
+
+    # Randomized perturbation
+    if args.perturb:
+        arr = randomized_perturbation(arr, magnitude_frac=args.perturb_magnitude, seed=args.seed)
 
     # call the camera simulator if requested
     if args.sim_camera:
@@ -124,7 +150,7 @@ def process_image(path_in, path_out, args):
                                        motion_blur_kernel=args.motion_blur_kernel,
                                        seed=args.seed)
 
-    # --- LUT application (optional) ---
+    # LUT application
     if args.lut:
         try:
             lut = load_lut(args.lut)
@@ -156,7 +182,6 @@ def build_argparser():
     p.add_argument('--cutoff', type=float, default=0.25, help='Fourier cutoff (0..1)')
     p.add_argument('--fstrength', type=float, default=0.9, help='Fourier blend strength (0..1)')
     p.add_argument('--randomness', type=float, default=0.05, help='Randomness for Fourier mask modulation')
-    p.add_argument('--perturb', type=float, default=0.008, help='Randomized perturb magnitude fraction (0..0.05)')
     p.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
 
     # FFT-matching options
@@ -167,18 +192,28 @@ def build_argparser():
     p.add_argument('--radial-smooth', type=int, default=5, help='Radial smoothing (bins) for spectrum profiles')
 
     # GLCM normalization options
-    p.add_argument('--glcm', action='store_true', help='Enable GLCM normalization using fft-ref image')
+    p.add_argument('--glcm', action='store_true', help='Enable GLCM normalization using FFT reference if available')
     p.add_argument('--glcm-distances', type=int, nargs='+', default=[1], help='Distances for GLCM computation')
     p.add_argument('--glcm-angles', type=float, nargs='+', default=[0, np.pi/4, np.pi/2, 3*np.pi/4], help='Angles for GLCM computation (in radians)')
     p.add_argument('--glcm-levels', type=int, default=256, help='Number of gray levels for GLCM')
     p.add_argument('--glcm-strength', type=float, default=0.9, help='Strength of GLCM feature matching (0..1)')
 
     # LBP normalization options
-    p.add_argument('--lbp', action='store_true', help='Enable LBP normalization using fft-ref image')
+    p.add_argument('--lbp', action='store_true', help='Enable LBP normalization using FFT reference if available')
     p.add_argument('--lbp-radius', type=int, default=3, help='Radius of LBP operator')
     p.add_argument('--lbp-n-points', type=int, default=24, help='Number of circularly symmetric neighbor set points for LBP')
     p.add_argument('--lbp-method', choices=('default', 'ror', 'uniform', 'var'), default='uniform', help='LBP method')
     p.add_argument('--lbp-strength', type=float, default=0.9, help='Strength of LBP histogram matching (0..1)')
+
+    # Non-semantic attack options
+    p.add_argument('--non-semantic', action='store_true', help='Apply non-semantic attack on the image')
+    p.add_argument('--ns-iterations', type=int, default=500, help='Iterations for non-semantic attack')
+    p.add_argument('--ns-learning-rate', type=float, default=3e-4, help='Learning rate for non-semantic attack')
+    p.add_argument('--ns-t-lpips', type=float, default=4e-2, help='LPIPS threshold for non-semantic attack')
+    p.add_argument('--ns-t-l2', type=float, default=3e-5, help='L2 threshold for non-semantic attack')
+    p.add_argument('--ns-c-lpips', type=float, default=1e-2, help='LPIPS constant for non-semantic attack')
+    p.add_argument('--ns-c-l2', type=float, default=0.6, help='L2 constant for non-semantic attack')
+    p.add_argument('--ns-grad-clip', type=float, default=0.05, help='Gradient clipping value for non-semantic attack')
 
     # Camera-simulator options
     p.add_argument('--sim-camera', action='store_true', help='Enable camera-pipeline simulation (Bayer, CA, vignette, JPEG cycles)')
@@ -198,6 +233,13 @@ def build_argparser():
     # LUT options
     p.add_argument('--lut', type=str, default=None, help='Path to a 1D PNG (256x1) or .npy LUT, or a .cube 3D LUT')
     p.add_argument('--lut-strength', type=float, default=0.1, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
+
+    # New positive flags to enable utils functions
+    p.add_argument('--noise', action='store_true', help='Enable Gaussian noise addition')
+    p.add_argument('--clahe', action='store_true', help='Enable CLAHE color correction')
+    p.add_argument('--fft', action='store_true', help='Enable FFT spectral matching')
+    p.add_argument('--perturb', action='store_true', help='Enable randomized perturbation')
+    p.add_argument('--perturb-magnitude', type=float, default=0.008, help='Randomized perturb magnitude fraction (0..0.05)')
 
     return p
 
