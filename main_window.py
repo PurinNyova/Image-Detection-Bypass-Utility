@@ -20,10 +20,30 @@ from utils import qpixmap_from_path
 from collapsible_box import CollapsibleBox
 from theme import apply_dark_palette
 import numpy as np
+import configparser
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # --- Load config.ini ---
+        config = configparser.ConfigParser()
+        config.read(os.path.join(os.path.dirname(__file__), "config.ini"))
+
+        def get(section, key, default, cast=str):
+            try:
+                val = config.get(section, key)
+                return cast(val)
+            except Exception:
+                return default
+
+        def getbool(section, key, default):
+            try:
+                return config.getboolean(section, key)
+            except Exception:
+                return default
+
+        # --- Window ---
         self.setWindowTitle("Image Detection Bypass Utility V1.2")
         self.setMinimumSize(1200, 760)
 
@@ -106,10 +126,10 @@ class MainWindow(QMainWindow):
 
         # Auto Mode toggle
         self.auto_mode_chk = QCheckBox("Enable Auto Mode")
-        self.auto_mode_chk.setChecked(False)
+        self.auto_mode_chk.setChecked(getbool("General", "auto_mode", False))
         self.auto_mode_chk.stateChanged.connect(self._on_auto_mode_toggled)
         right_v.addWidget(self.auto_mode_chk)
-        
+
         # Auto Mode section collapsible
         self.auto_box = CollapsibleBox("Auto Mode")
         right_v.addWidget(self.auto_box)
@@ -121,13 +141,12 @@ class MainWindow(QMainWindow):
         strength_layout = QHBoxLayout()
         self.strength_slider = QSlider(Qt.Horizontal)
         self.strength_slider.setRange(0, 100)
-        self.strength_slider.setValue(25)
+        self.strength_slider.setValue(get("AutoMode", "strength", 25, int))
         self.strength_slider.valueChanged.connect(self._update_strength_label)
-        self.strength_label = QLabel("25")
+        self.strength_label = QLabel(str(self.strength_slider.value()))
         self.strength_label.setFixedWidth(30)
         strength_layout.addWidget(self.strength_slider)
         strength_layout.addWidget(self.strength_label)
-
         auto_layout.addRow("Aberration Strength", strength_layout)
 
         # AI Normalizer
@@ -140,12 +159,12 @@ class MainWindow(QMainWindow):
 
         self.ns_chk = QCheckBox("Enable AI Normalizer (Torch Required)")
         self.ns_chk.setToolTip("Enable AI Normalizer. Requires PyTorch.")
-        self.ns_chk.setChecked(False)
+        self.ns_chk.setChecked(getbool("AINormalizer", "enabled", False))
         ai_layout.addRow(self.ns_chk)
 
         self.ns_iterations_spin = QSpinBox()
         self.ns_iterations_spin.setRange(1, 10000)
-        self.ns_iterations_spin.setValue(500)
+        self.ns_iterations_spin.setValue(get("AINormalizer", "iterations", 500, int))
         self.ns_iterations_spin.setToolTip("Number of iterations for the AI Normalizer optimization.")
         ai_layout.addRow("Iterations", self.ns_iterations_spin)
 
@@ -153,7 +172,7 @@ class MainWindow(QMainWindow):
         self.ns_lr_spin.setDecimals(6)
         self.ns_lr_spin.setRange(0.000001, 0.1)
         self.ns_lr_spin.setSingleStep(0.0001)
-        self.ns_lr_spin.setValue(0.0003)
+        self.ns_lr_spin.setValue(get("AINormalizer", "learning_rate", 0.0003, float))
         self.ns_lr_spin.setToolTip("Learning rate for the AI Normalizer optimization.")
         ai_layout.addRow("Learning Rate", self.ns_lr_spin)
 
@@ -161,7 +180,7 @@ class MainWindow(QMainWindow):
         self.ns_t_lpips_spin.setDecimals(6)
         self.ns_t_lpips_spin.setRange(0.000001, 1.0)
         self.ns_t_lpips_spin.setSingleStep(0.0001)
-        self.ns_t_lpips_spin.setValue(0.04)
+        self.ns_t_lpips_spin.setValue(get("AINormalizer", "t_lpips", 0.04, float))
         self.ns_t_lpips_spin.setToolTip("Temporally weighted LPIPS loss parameter.")
         ai_layout.addRow("T LPIPS", self.ns_t_lpips_spin)
 
@@ -169,7 +188,7 @@ class MainWindow(QMainWindow):
         self.ns_t_l2_spin.setDecimals(6)
         self.ns_t_l2_spin.setRange(0.000001, 1.0)
         self.ns_t_l2_spin.setSingleStep(0.00001)
-        self.ns_t_l2_spin.setValue(3e-05)
+        self.ns_t_l2_spin.setValue(get("AINormalizer", "t_l2", 3e-05, float))
         self.ns_t_l2_spin.setToolTip("Temporally weighted L2 loss parameter.")
         ai_layout.addRow("T L2", self.ns_t_l2_spin)
 
@@ -177,7 +196,7 @@ class MainWindow(QMainWindow):
         self.ns_c_lpips_spin.setDecimals(6)
         self.ns_c_lpips_spin.setRange(0.000001, 1.0)
         self.ns_c_lpips_spin.setSingleStep(0.0001)
-        self.ns_c_lpips_spin.setValue(0.01)
+        self.ns_c_lpips_spin.setValue(get("AINormalizer", "c_lpips", 0.01, float))
         self.ns_c_lpips_spin.setToolTip("Content loss LPIPS weight.")
         ai_layout.addRow("C LPIPS", self.ns_c_lpips_spin)
 
@@ -185,7 +204,7 @@ class MainWindow(QMainWindow):
         self.ns_c_l2_spin.setDecimals(6)
         self.ns_c_l2_spin.setRange(0.000001, 10.0)
         self.ns_c_l2_spin.setSingleStep(0.01)
-        self.ns_c_l2_spin.setValue(0.6)
+        self.ns_c_l2_spin.setValue(get("AINormalizer", "c_l2", 0.6, float))
         self.ns_c_l2_spin.setToolTip("Content loss L2 weight.")
         ai_layout.addRow("C L2", self.ns_c_l2_spin)
 
@@ -193,7 +212,7 @@ class MainWindow(QMainWindow):
         self.ns_grad_clip_spin.setDecimals(6)
         self.ns_grad_clip_spin.setRange(0.000001, 1.0)
         self.ns_grad_clip_spin.setSingleStep(0.0001)
-        self.ns_grad_clip_spin.setValue(0.05)
+        self.ns_grad_clip_spin.setValue(get("AINormalizer", "grad_clip", 0.05, float))
         self.ns_grad_clip_spin.setToolTip("Gradient clipping threshold to stabilize training.")
         ai_layout.addRow("Gradient Clip", self.ns_grad_clip_spin)
 
@@ -207,26 +226,26 @@ class MainWindow(QMainWindow):
 
         # New optional flags for processing steps
         self.noise_enable_chk = QCheckBox("Enable Gaussian Noise")
-        self.noise_enable_chk.setChecked(True)
+        self.noise_enable_chk.setChecked(getbool("ManualParameters", "noise_enable", True))
         params_layout.addRow(self.noise_enable_chk)
 
         self.clahe_enable_chk = QCheckBox("Enable CLAHE Color Correction")
-        self.clahe_enable_chk.setChecked(True)
+        self.clahe_enable_chk.setChecked(getbool("ManualParameters", "clahe_enable", True))
         params_layout.addRow(self.clahe_enable_chk)
 
         self.fft_enable_chk = QCheckBox("Enable FFT Spectral Matching")
-        self.fft_enable_chk.setChecked(True)
+        self.fft_enable_chk.setChecked(getbool("ManualParameters", "fft_enable", True))
         params_layout.addRow(self.fft_enable_chk)
 
         self.perturb_enable_chk = QCheckBox("Enable Randomized Perturbation")
-        self.perturb_enable_chk.setChecked(True)
+        self.perturb_enable_chk.setChecked(getbool("ManualParameters", "perturb_enable", True))
         params_layout.addRow(self.perturb_enable_chk)
 
         # Noise-std
         self.noise_spin = QDoubleSpinBox()
         self.noise_spin.setRange(0.0, 0.1)
         self.noise_spin.setSingleStep(0.001)
-        self.noise_spin.setValue(0.02)
+        self.noise_spin.setValue(get("ManualParameters", "noise_std", 0.02, float))
         self.noise_spin.setToolTip("Gaussian noise std fraction of 255")
         params_layout.addRow("Noise std (0-0.1)", self.noise_spin)
 
@@ -234,61 +253,61 @@ class MainWindow(QMainWindow):
         self.clahe_spin = QDoubleSpinBox()
         self.clahe_spin.setRange(0.1, 10.0)
         self.clahe_spin.setSingleStep(0.1)
-        self.clahe_spin.setValue(2.0)
+        self.clahe_spin.setValue(get("ManualParameters", "clahe_clip", 2.0, float))
         params_layout.addRow("CLAHE clip", self.clahe_spin)
 
         # Tile
         self.tile_spin = QSpinBox()
         self.tile_spin.setRange(1, 64)
-        self.tile_spin.setValue(8)
+        self.tile_spin.setValue(get("ManualParameters", "tile", 8, int))
         params_layout.addRow("CLAHE tile", self.tile_spin)
 
         # Cutoff
         self.cutoff_spin = QDoubleSpinBox()
         self.cutoff_spin.setRange(0.01, 1.0)
         self.cutoff_spin.setSingleStep(0.01)
-        self.cutoff_spin.setValue(0.25)
+        self.cutoff_spin.setValue(get("ManualParameters", "cutoff", 0.25, float))
         params_layout.addRow("Fourier cutoff (0-1)", self.cutoff_spin)
 
         # Fstrength
         self.fstrength_spin = QDoubleSpinBox()
         self.fstrength_spin.setRange(0.0, 1.0)
         self.fstrength_spin.setSingleStep(0.01)
-        self.fstrength_spin.setValue(0.9)
+        self.fstrength_spin.setValue(get("ManualParameters", "fstrength", 0.9, float))
         params_layout.addRow("Fourier strength (0-1)", self.fstrength_spin)
 
         # Randomness
         self.randomness_spin = QDoubleSpinBox()
         self.randomness_spin.setRange(0.0, 1.0)
         self.randomness_spin.setSingleStep(0.01)
-        self.randomness_spin.setValue(0.05)
+        self.randomness_spin.setValue(get("ManualParameters", "randomness", 0.05, float))
         params_layout.addRow("Fourier randomness", self.randomness_spin)
 
         # Phase_perturb
         self.phase_perturb_spin = QDoubleSpinBox()
         self.phase_perturb_spin.setRange(0.0, 1.0)
         self.phase_perturb_spin.setSingleStep(0.001)
-        self.phase_perturb_spin.setValue(0.08)
+        self.phase_perturb_spin.setValue(get("ManualParameters", "phase_perturb", 0.08, float))
         self.phase_perturb_spin.setToolTip("Phase perturbation std (radians)")
         params_layout.addRow("Phase perturb (rad)", self.phase_perturb_spin)
 
         # Radial_smooth
         self.radial_smooth_spin = QSpinBox()
         self.radial_smooth_spin.setRange(0, 50)
-        self.radial_smooth_spin.setValue(5)
+        self.radial_smooth_spin.setValue(get("ManualParameters", "radial_smooth", 5, int))
         params_layout.addRow("Radial smooth (bins)", self.radial_smooth_spin)
 
         # FFT_mode
         self.fft_mode_combo = QComboBox()
         self.fft_mode_combo.addItems(["auto", "ref", "model"])
-        self.fft_mode_combo.setCurrentText("auto")
+        self.fft_mode_combo.setCurrentText(get("ManualParameters", "fft_mode", "auto"))
         params_layout.addRow("FFT mode", self.fft_mode_combo)
 
         # FFT_alpha
         self.fft_alpha_spin = QDoubleSpinBox()
         self.fft_alpha_spin.setRange(0.1, 4.0)
         self.fft_alpha_spin.setSingleStep(0.1)
-        self.fft_alpha_spin.setValue(1.0)
+        self.fft_alpha_spin.setValue(get("ManualParameters", "fft_alpha", 1.0, float))
         self.fft_alpha_spin.setToolTip("Alpha exponent for 1/f model when using model mode")
         params_layout.addRow("FFT alpha (model)", self.fft_alpha_spin)
 
@@ -296,35 +315,35 @@ class MainWindow(QMainWindow):
         self.perturb_spin = QDoubleSpinBox()
         self.perturb_spin.setRange(0.0, 0.05)
         self.perturb_spin.setSingleStep(0.001)
-        self.perturb_spin.setValue(0.008)
+        self.perturb_spin.setValue(get("ManualParameters", "perturb", 0.008, float))
         params_layout.addRow("Pixel perturb", self.perturb_spin)
 
         # Seed
         self.seed_spin = QSpinBox()
         self.seed_spin.setRange(0, 2 ** 31 - 1)
-        self.seed_spin.setValue(0)
+        self.seed_spin.setValue(get("ManualParameters", "seed", 0, int))
         params_layout.addRow("Seed (0=none)", self.seed_spin)
 
         # AWB checkbox
         self.awb_chk = QCheckBox("Enable auto white-balance (AWB)")
-        self.awb_chk.setChecked(False)
+        self.awb_chk.setChecked(getbool("AWB", "enabled", False))
         self.awb_chk.setToolTip("If checked, AWB is applied. If a reference image is chosen, it will be used; otherwise gray-world AWB is applied.")
         params_layout.addRow(self.awb_chk)
 
         # Camera simulator toggle
         self.sim_camera_chk = QCheckBox("Enable camera pipeline simulation")
-        self.sim_camera_chk.setChecked(False)
+        self.sim_camera_chk.setChecked(getbool("CameraSimulator", "enabled", False))
         self.sim_camera_chk.stateChanged.connect(self._on_sim_camera_toggled)
         params_layout.addRow(self.sim_camera_chk)
 
         # LUT support UI
         self.lut_chk = QCheckBox("Enable LUT")
-        self.lut_chk.setChecked(False)
+        self.lut_chk.setChecked(getbool("LUT", "enabled", False))
         self.lut_chk.setToolTip("Enable applying a 1D/.npy/.cube LUT to the output image")
         self.lut_chk.stateChanged.connect(self._on_lut_toggled)
         params_layout.addRow(self.lut_chk)
 
-        self.lut_line = QLineEdit()
+        self.lut_line = QLineEdit(get("LUT", "file", ""))
         self.lut_btn = QPushButton("Choose LUT")
         self.lut_btn.clicked.connect(self.choose_lut)
         lut_box = QWidget()
@@ -339,7 +358,7 @@ class MainWindow(QMainWindow):
         self.lut_strength_spin = QDoubleSpinBox()
         self.lut_strength_spin.setRange(0.0, 1.0)
         self.lut_strength_spin.setSingleStep(0.01)
-        self.lut_strength_spin.setValue(1.0)
+        self.lut_strength_spin.setValue(get("LUT", "strength", 1.0, float))
         self.lut_strength_spin.setToolTip("Blend strength for LUT (0.0 = no effect, 1.0 = full LUT)")
         self.lut_strength_label = QLabel("LUT strength")
         params_layout.addRow(self.lut_strength_label, self.lut_strength_spin)
@@ -350,7 +369,6 @@ class MainWindow(QMainWindow):
         self.lut_strength_label.setVisible(False)
         self.lut_strength_spin.setVisible(False)
 
-        # Store all widgets that need their visibility toggled
         self._lut_controls = (self.lut_file_label, lut_box, self.lut_strength_label, self.lut_strength_spin)
 
         # Texture Normalization collapsible group
@@ -363,24 +381,24 @@ class MainWindow(QMainWindow):
 
         # GLCM checkbox
         self.glcm_chk = QCheckBox("Enable GLCM Normalization")
-        self.glcm_chk.setChecked(False)
+        self.glcm_chk.setChecked(getbool("TextureNormalization", "glcm_enabled", False))
         self.glcm_chk.setToolTip("Enable GLCM normalization using FFT reference image")
         texture_layout.addRow(self.glcm_chk)
 
         # GLCM distances
-        self.glcm_distances_line = QLineEdit("1")
+        self.glcm_distances_line = QLineEdit(get("TextureNormalization", "glcm_distances", "1"))
         self.glcm_distances_line.setToolTip("Space-separated list of distances for GLCM computation (e.g., '1 2 3')")
         texture_layout.addRow("GLCM Distances", self.glcm_distances_line)
 
         # GLCM angles
-        self.glcm_angles_line = QLineEdit("0 0.785 1.571 2.356")
+        self.glcm_angles_line = QLineEdit(get("TextureNormalization", "glcm_angles", "0 0.785 1.571 2.356"))
         self.glcm_angles_line.setToolTip("Space-separated list of angles in radians for GLCM (e.g., '0 0.785 1.571 2.356')")
         texture_layout.addRow("GLCM Angles (rad)", self.glcm_angles_line)
 
         # GLCM levels
         self.glcm_levels_spin = QSpinBox()
         self.glcm_levels_spin.setRange(2, 256)
-        self.glcm_levels_spin.setValue(256)
+        self.glcm_levels_spin.setValue(get("TextureNormalization", "glcm_levels", 256, int))
         self.glcm_levels_spin.setToolTip("Number of gray levels for GLCM")
         texture_layout.addRow("GLCM Levels", self.glcm_levels_spin)
 
@@ -388,34 +406,34 @@ class MainWindow(QMainWindow):
         self.glcm_strength_spin = QDoubleSpinBox()
         self.glcm_strength_spin.setRange(0.0, 1.0)
         self.glcm_strength_spin.setSingleStep(0.01)
-        self.glcm_strength_spin.setValue(0.9)
+        self.glcm_strength_spin.setValue(get("TextureNormalization", "glcm_strength", 0.9, float))
         self.glcm_strength_spin.setToolTip("Strength of GLCM feature matching (0.0 = no effect, 1.0 = full effect)")
         texture_layout.addRow("GLCM Strength", self.glcm_strength_spin)
 
         # LBP checkbox
         self.lbp_chk = QCheckBox("Enable LBP Normalization")
-        self.lbp_chk.setChecked(False)
+        self.lbp_chk.setChecked(getbool("TextureNormalization", "lbp_enabled", False))
         self.lbp_chk.setToolTip("Enable LBP normalization using FFT reference image")
         texture_layout.addRow(self.lbp_chk)
 
         # LBP radius
         self.lbp_radius_spin = QSpinBox()
         self.lbp_radius_spin.setRange(1, 10)
-        self.lbp_radius_spin.setValue(3)
+        self.lbp_radius_spin.setValue(get("TextureNormalization", "lbp_radius", 3, int))
         self.lbp_radius_spin.setToolTip("Radius of LBP operator")
         texture_layout.addRow("LBP Radius", self.lbp_radius_spin)
 
         # LBP n_points
         self.lbp_n_points_spin = QSpinBox()
         self.lbp_n_points_spin.setRange(8, 64)
-        self.lbp_n_points_spin.setValue(24)
+        self.lbp_n_points_spin.setValue(get("TextureNormalization", "lbp_n_points", 24, int))
         self.lbp_n_points_spin.setToolTip("Number of circularly symmetric neighbor set points for LBP")
         texture_layout.addRow("LBP N Points", self.lbp_n_points_spin)
 
         # LBP method
         self.lbp_method_combo = QComboBox()
         self.lbp_method_combo.addItems(["default", "ror", "uniform", "var"])
-        self.lbp_method_combo.setCurrentText("uniform")
+        self.lbp_method_combo.setCurrentText(get("TextureNormalization", "lbp_method", "uniform"))
         self.lbp_method_combo.setToolTip("LBP method: default, ror, uniform, or var")
         texture_layout.addRow("LBP Method", self.lbp_method_combo)
 
@@ -423,7 +441,7 @@ class MainWindow(QMainWindow):
         self.lbp_strength_spin = QDoubleSpinBox()
         self.lbp_strength_spin.setRange(0.0, 1.0)
         self.lbp_strength_spin.setSingleStep(0.01)
-        self.lbp_strength_spin.setValue(0.9)
+        self.lbp_strength_spin.setValue(get("TextureNormalization", "lbp_strength", 0.9, float))
         self.lbp_strength_spin.setToolTip("Strength of LBP histogram matching (0.0 = no effect, 1.0 = full effect)")
         texture_layout.addRow("LBP Strength", self.lbp_strength_spin)
 
@@ -437,22 +455,22 @@ class MainWindow(QMainWindow):
 
         # Enable bayer
         self.bayer_chk = QCheckBox("Enable Bayer / demosaic (RGGB)")
-        self.bayer_chk.setChecked(True)
+        self.bayer_chk.setChecked(getbool("CameraSimulator", "bayer", True))
         cam_layout.addRow(self.bayer_chk)
 
         # JPEG cycles
         self.jpeg_cycles_spin = QSpinBox()
         self.jpeg_cycles_spin.setRange(0, 10)
-        self.jpeg_cycles_spin.setValue(1)
+        self.jpeg_cycles_spin.setValue(get("CameraSimulator", "jpeg_cycles", 1, int))
         cam_layout.addRow("JPEG cycles", self.jpeg_cycles_spin)
 
         # JPEG quality min/max
         self.jpeg_qmin_spin = QSpinBox()
         self.jpeg_qmin_spin.setRange(1, 100)
-        self.jpeg_qmin_spin.setValue(88)
+        self.jpeg_qmin_spin.setValue(get("CameraSimulator", "jpeg_qmin", 88, int))
         self.jpeg_qmax_spin = QSpinBox()
         self.jpeg_qmax_spin.setRange(1, 100)
-        self.jpeg_qmax_spin.setValue(96)
+        self.jpeg_qmax_spin.setValue(get("CameraSimulator", "jpeg_qmax", 96, int))
         qbox = QHBoxLayout()
         qbox.addWidget(self.jpeg_qmin_spin)
         qbox.addWidget(QLabel("to"))
@@ -463,28 +481,28 @@ class MainWindow(QMainWindow):
         self.vignette_spin = QDoubleSpinBox()
         self.vignette_spin.setRange(0.0, 1.0)
         self.vignette_spin.setSingleStep(0.01)
-        self.vignette_spin.setValue(0.35)
+        self.vignette_spin.setValue(get("CameraSimulator", "vignette_strength", 0.35, float))
         cam_layout.addRow("Vignette strength", self.vignette_spin)
 
         # Chromatic aberration strength
         self.chroma_spin = QDoubleSpinBox()
         self.chroma_spin.setRange(0.0, 10.0)
         self.chroma_spin.setSingleStep(0.1)
-        self.chroma_spin.setValue(1.2)
+        self.chroma_spin.setValue(get("CameraSimulator", "chroma_strength", 1.2, float))
         cam_layout.addRow("Chromatic aberration (px)", self.chroma_spin)
 
         # ISO scale
         self.iso_spin = QDoubleSpinBox()
         self.iso_spin.setRange(0.1, 16.0)
         self.iso_spin.setSingleStep(0.1)
-        self.iso_spin.setValue(1.0)
+        self.iso_spin.setValue(get("CameraSimulator", "iso_scale", 1.0, float))
         cam_layout.addRow("ISO/exposure scale", self.iso_spin)
 
         # Read noise
         self.read_noise_spin = QDoubleSpinBox()
         self.read_noise_spin.setRange(0.0, 50.0)
         self.read_noise_spin.setSingleStep(0.1)
-        self.read_noise_spin.setValue(2.0)
+        self.read_noise_spin.setValue(get("CameraSimulator", "read_noise", 2.0, float))
         cam_layout.addRow("Read noise (DN)", self.read_noise_spin)
 
         # Hot pixel prob
@@ -492,20 +510,20 @@ class MainWindow(QMainWindow):
         self.hot_pixel_spin.setDecimals(9)
         self.hot_pixel_spin.setRange(0.0, 1.0)
         self.hot_pixel_spin.setSingleStep(1e-6)
-        self.hot_pixel_spin.setValue(1e-6)
+        self.hot_pixel_spin.setValue(get("CameraSimulator", "hot_pixel_prob", 1e-6, float))
         cam_layout.addRow("Hot pixel prob", self.hot_pixel_spin)
 
         # Banding strength
         self.banding_spin = QDoubleSpinBox()
         self.banding_spin.setRange(0.0, 1.0)
         self.banding_spin.setSingleStep(0.01)
-        self.banding_spin.setValue(0.0)
+        self.banding_spin.setValue(get("CameraSimulator", "banding_strength", 0.0, float))
         cam_layout.addRow("Banding strength", self.banding_spin)
 
         # Motion blur kernel
         self.motion_blur_spin = QSpinBox()
         self.motion_blur_spin.setRange(1, 51)
-        self.motion_blur_spin.setValue(1)
+        self.motion_blur_spin.setValue(get("CameraSimulator", "motion_blur_kernel", 1, int))
         cam_layout.addRow("Motion blur kernel", self.motion_blur_spin)
 
         self.camera_box.setVisible(False)
