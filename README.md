@@ -2,6 +2,17 @@
 
 Circumvention of AI Detection — all wrapped in a clean, user-friendly interface.
 
+![MIT License](https://img.shields.io/badge/License-MIT-green.svg)
+![Python 3.13](https://img.shields.io/badge/Python-3.13-yellow)
+![PyQt5](https://img.shields.io/badge/PyQt5-latest-blue)
+![Pillow](https://img.shields.io/badge/Pillow-latest-lightgrey)
+![NumPy](https://img.shields.io/badge/NumPy-latest-lightgrey)
+![Matplotlib](https://img.shields.io/badge/Matplotlib-latest-lightgrey)
+![piexif](https://img.shields.io/badge/piexif-latest-lightgrey)
+![OpenCV](https://img.shields.io/badge/OpenCV-latest-darkgreen)
+![Torch 2.8.0+cu126](https://img.shields.io/badge/Torch-2.8.0%2Bcu126-red)
+![TorchVision 0.23.0+cu126](https://img.shields.io/badge/TorchVision-0.23.0%2Bcu126-orange)
+
 ---
 
 ## Screenshot
@@ -283,6 +294,13 @@ When you click **Run**, the GUI builds a lightweight argument namespace (similar
 * Add unit tests for `worker.py` and the parameter serialization if you intend to refactor.
 
 ---
+
+## Paper Used
+
+This project credits and draws inspiration from:
+
+**UnMarker: A Universal Attack on Defensive Image Watermarking**  
+Andre Kassis, Urs Hengartner
 
 ## License
 

@@ -4,3 +4,6 @@ numpy
 matplotlib
 piexif
 opencv-python
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.8.0cu126
+torchvision==0.23.0+cu126
