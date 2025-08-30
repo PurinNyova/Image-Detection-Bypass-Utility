@@ -6,7 +6,7 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 
 ## Screenshot
 
-![Screenshot](https://i.imgur.com/Jp9U8Rm.png)
+![Screenshot](https://i.imgur.com/y0tuDcK.png)
 
 ## Features
 
