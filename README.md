@@ -30,6 +30,78 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 
 ---
 
+## ComfyUI Integration
+
+![Screenshot](https://i.imgur.com/KzjEfxf.png)
+
+Use ComfyUI Manager and install via GitHub link.
+Or manually clone to custom\_nodes folder.
+
+```bash
+git clone https://github.com/PurinNyova/Image-Detection-Bypass-Utility
+```
+
+then
+
+```bash
+cd Image-Detection-Bypass-Utility
+pip install -r requirements.txt
+```
+
+Thanks to u/Race88 for the help on the ComfyUI code.
+
+### Requirements
+
+* Python 3.8+ recommended
+* PyPI packages:
+
+```bash
+pip install pyqt5 pillow numpy matplotlib piexif lpips
+# optional but recommended for extra functionality:
+pip install opencv-python
+# optional but needed for AI Normalizer (Install CPU OR Cuda)
+#Torch Cuda 12.6
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#Torch CPU
+pip install torch torchvision
+
+```
+
+OR
+
+```bash
+pip install -r requirements.txt
+```
+
+### Files expected in the same folder
+
+* `image_postprocess` — your processing logic (export `process_image(...)` or compatible API).
+* `worker.py` — Worker thread wrapper used to run the pipeline in background.
+* `analysis_panel.py` — UI widget used for input/output analysis.
+* `utils.py` — must provide `qpixmap_from_path(path, max_size=(w,h))`.
+
+### Run
+
+```bash
+python run.py
+```
+
+---
+
+## Using the GUI (at-a-glance)
+
+1. **Choose Input** — opens file dialog; sets suggested output path automatically.
+2. *(optional)* **Choose Reference** — used for FFT/color reference (OpenCV-based color match supported).
+3. *(optional)* **Choose Auto White-Balance Reference** — used for auto white-balance correction (applied before CLAHE).
+4. **Choose Output** — where processed image will be written.
+5. **Auto Mode** — enable for a single slider to control a bundled preset.
+6. **Manual Mode** — tune individual parameters in the Parameters group.
+7. **Camera Simulator** — enable to reveal camera-specific controls (Bayer, JPEG cycles, vignette, chroma, etc.).
+8. Click **Run — Process Image** to start. The GUI disables controls while running and shows progress.
+9. When finished, the output preview and Output analysis panel update automatically.
+
+---
+
 ## Parameter Explanation
 
 This section documents every manual parameter exposed by the GUI and gives guidance for usage.
@@ -157,76 +229,6 @@ When enabled, the AI Normalizer applies a non-semantic attack using PyTorch and 
 * **C LPIPS** — Weighting factor for the LPIPS loss penalty.
 * **C L2** — Weighting factor for the L2 loss penalty.
 * **Gradient Clip** — Maximum allowed gradient value during optimization to prevent exploding gradients.
-
----
-
-## ComfyUI Integration
-
-Use ComfyUI Manager and install via GitHub link.
-Or manually clone to custom\_nodes folder.
-
-```bash
-git clone https://github.com/PurinNyova/Image-Detection-Bypass-Utility
-```
-
-then
-
-```bash
-cd Image-Detection-Bypass-Utility
-pip install -r requirements.txt
-```
-
-Thanks to u/Race88 for the help on the ComfyUI code.
-
-### Requirements
-
-* Python 3.8+ recommended
-* PyPI packages:
-
-```bash
-pip install pyqt5 pillow numpy matplotlib piexif lpips
-# optional but recommended for extra functionality:
-pip install opencv-python
-# optional but needed for AI Normalizer (Install CPU OR Cuda)
-#Torch Cuda 12.6
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-#Torch CPU
-pip install torch torchvision
-
-```
-
-OR
-
-```bash
-pip install -r requirements.txt
-```
-
-### Files expected in the same folder
-
-* `image_postprocess` — your processing logic (export `process_image(...)` or compatible API).
-* `worker.py` — Worker thread wrapper used to run the pipeline in background.
-* `analysis_panel.py` — UI widget used for input/output analysis.
-* `utils.py` — must provide `qpixmap_from_path(path, max_size=(w,h))`.
-
-### Run
-
-```bash
-python run.py
-```
-
----
-
-## Using the GUI (at-a-glance)
-
-1. **Choose Input** — opens file dialog; sets suggested output path automatically.
-2. *(optional)* **Choose Reference** — used for FFT/color reference (OpenCV-based color match supported).
-3. *(optional)* **Choose Auto White-Balance Reference** — used for auto white-balance correction (applied before CLAHE).
-4. **Choose Output** — where processed image will be written.
-5. **Auto Mode** — enable for a single slider to control a bundled preset.
-6. **Manual Mode** — tune individual parameters in the Parameters group.
-7. **Camera Simulator** — enable to reveal camera-specific controls (Bayer, JPEG cycles, vignette, chroma, etc.).
-8. Click **Run — Process Image** to start. The GUI disables controls while running and shows progress.
-9. When finished, the output preview and Output analysis panel update automatically.
 
 ---
 
