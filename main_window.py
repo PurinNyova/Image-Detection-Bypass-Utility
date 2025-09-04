@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
                 return default
 
         # --- Window ---
-        self.setWindowTitle("Image Detection Bypass Utility V1.2")
+        self.setWindowTitle("Image Detection Bypass Utility V1.3R2")
         self.setMinimumSize(1200, 760)
 
         central = QWidget()
