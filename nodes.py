@@ -231,52 +231,60 @@ class NovaNodes:
             parsed_glcm_distances = _parse_int_list(glcm_distances)
             parsed_glcm_angles = _parse_float_list(glcm_angles)
 
-            # Prepare args for process_image
+            # Prepare args for process_image with updated keys
             args = SimpleNamespace(
                 input=input_path,
                 output=output_path,
-                awb=enable_awb, # Explicit AWB flag
+                awb=enable_awb,  # Explicit AWB flag
                 ref=awb_ref_path,
-                noise_std=noise_std_frac,
-                hot_pixel_prob=hot_pixel_prob,
-                perturb=perturb_mag_frac,
+                noise_std=noise_std_frac,  # renamed from noise_std_frac
+                noise=True,  # enable Gaussian noise (--noise)
+                clahe=True,  # enable CLAHE (--clahe)
                 clahe_clip=clahe_clip,
                 tile=clahe_grid,
+                fft=apply_fourier_o,  # enable FFT spectral matching (--fft)
                 fstrength=fourier_strength if apply_fourier_o else 0.0,
                 randomness=fourier_randomness,
                 phase_perturb=fourier_phase_perturb,
                 fft_alpha=fourier_alpha,
+                cutoff=fourier_cutoff,
                 radial_smooth=fourier_radial_smooth,
                 fft_mode=fourier_mode,
                 fft_ref=fft_ref_path,
+                perturb=(True if perturb_mag_frac > 0 else False),  # flag for perturbation (--perturb)
+                perturb_magnitude=perturb_mag_frac,  # perturb magnitude (--perturb-magnitude)
                 vignette_strength=vignette_strength if apply_vignette_o else 0.0,
                 chroma_strength=ca_shift if apply_chromatic_aberration_o else 0.0,
                 banding_strength=banding_strength if apply_banding_o else 0.0,
                 motion_blur_kernel=motion_blur_ksize if apply_motion_blur_o else 1,
                 jpeg_cycles=jpeg_cycles if apply_jpeg_cycles_o else 1,
                 jpeg_qmin=jpeg_quality,
-                jpeg_qmax=96, # As per image range
+                jpeg_qmax=96,  # as per image range
                 sim_camera=sim_camera,
-                no_no_bayer=not enable_bayer, # FIX: Inverted logic corrected
+                no_no_bayer=not enable_bayer,  # inverted logic corrected
                 iso_scale=iso_scale,
                 read_noise=read_noise,
-                seed=None, # Seed is not user-configurable in this version
-                cutoff=fourier_cutoff,
+                seed=None,  # Seed is not user-configurable in this version
                 lut=(lut if enable_lut and lut != "" else None),
                 lut_strength=lut_strength,
-
-                # New GLCM/LBP args
                 glcm=bool(glcm),
                 glcm_distances=parsed_glcm_distances,
                 glcm_angles=parsed_glcm_angles,
                 glcm_levels=int(glcm_levels),
                 glcm_strength=float(glcm_strength),
-
                 lbp=bool(lbp),
                 lbp_radius=int(lbp_radius),
                 lbp_n_points=int(lbp_n_points),
                 lbp_method=str(lbp_method),
                 lbp_strength=float(lbp_strength),
+                non_semantic=False,  # non-semantic attack disabled by default
+                ns_iterations=500,
+                ns_learning_rate=3e-4,
+                ns_t_lpips=4e-2,
+                ns_t_l2=3e-5,
+                ns_c_lpips=1e-2,
+                ns_c_l2=0.6,
+                ns_grad_clip=0.05,
             )
 
             # ---- Run the processing function ----
