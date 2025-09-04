@@ -23,8 +23,10 @@ def main():
     apply_dark_palette(app)
 
     if IMPORT_ERROR:
-        QMessageBox.critical(None, "Import error",
-                             "Could not import image_postprocess module:\n" + IMPORT_ERROR)
+        msg = QMessageBox(QMessageBox.Critical, "Import error",
+                          "Could not import image_postprocess module:\n" + IMPORT_ERROR)
+        msg.setStyleSheet("QLabel{ color: black; } QPushButton{ color: black; }")
+        msg.exec_()
 
     w = MainWindow()
     w.show()
