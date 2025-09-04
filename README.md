@@ -184,7 +184,7 @@ Thanks to u/Race88 for the help on the ComfyUI code.
 * PyPI packages:
 
 ```bash
-pip install pyqt5 pillow numpy matplotlib piexif
+pip install pyqt5 pillow numpy matplotlib piexif lpips
 # optional but recommended for extra functionality:
 pip install opencv-python
 # optional but needed for AI Normalizer (Install CPU OR Cuda)
