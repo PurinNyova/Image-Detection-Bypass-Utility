@@ -5,6 +5,8 @@ import os
 import tempfile
 from types import SimpleNamespace
 from typing import Tuple
+import json
+
 try:
     from .image_postprocess import process_image
 except Exception as e:
@@ -13,30 +15,87 @@ except Exception as e:
 else:
     IMPORT_ERROR = None
 
+from .nodes_utils import CameraOptionsNode, NSOptionsNode
+
 lut_extensions = ['png','npy','cube']
+
+# ---------- Helper utilities (kept from original) ----------
+
+def to_pil_from_any(inp):
+    """Convert a torch tensor / numpy array of many shapes into a PIL RGB Image."""
+    if isinstance(inp, torch.Tensor):
+        arr = inp.detach().cpu().numpy()
+    else:
+        arr = np.asarray(inp)
+    if arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim == 3 and arr.shape[0] in (1, 3):
+        arr = np.transpose(arr, (1, 2, 0))
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    if arr.ndim != 3:
+        raise TypeError(f"Cannot convert array to HWC image, final ndim={arr.ndim}, shape={arr.shape}")
+    if np.issubdtype(arr.dtype, np.floating):
+        if arr.max() <= 1.0:
+            arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+        else:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+    else:
+        arr = arr.astype(np.uint8)
+    if arr.shape[2] == 1:
+        arr = np.repeat(arr, 3, axis=2)
+    return Image.fromarray(arr)
+
+# utility parsers for list-like UI inputs
+
+def _parse_int_list(val):
+    if isinstance(val, (list, tuple)):
+        return [int(x) for x in val]
+    if isinstance(val, (int, np.integer)):
+        return [int(val)]
+    s = str(val).strip()
+    if s == "":
+        return []
+    parts = [p for p in s.replace(',', ' ').split() if p != ""]
+    return [int(p) for p in parts]
+
+
+def _parse_float_list(val):
+    if isinstance(val, (list, tuple)):
+        return [float(x) for x in val]
+    if isinstance(val, (float, int, np.floating, np.integer)):
+        return [float(val)]
+    s = str(val).strip()
+    if s == "":
+        return []
+    parts = [p for p in s.replace(',', ' ').split() if p != ""]
+    return [float(p) for p in parts]
 
 class NovaNodes:
     """
-    ComfyUI node: Full post-processing chain using process_image from image_postprocess
-    All augmentations with tunable parameters.
+    ComfyUI node: Full post-processing chain using process_image from image_postprocess.
+    This version expects two optional JSON inputs:
+      - Cam_Opt: JSON string produced by CameraOptionsNode
+      - NS_Opt: JSON string produced by NSOptionsNode
 
-    Added LUT support: two new node inputs:
-      - lut: STRING path to a LUT file (1D PNG 256x1, .npy, or .cube). Empty string -> disabled.
-      - lut_strength: FLOAT blend strength (0.0..1.0)
-
-    Added GLCM / LBP options (mapped from CLI-style args). GLCM/LBP list-like inputs accept
-    comma- or space-separated strings (e.g. "1,2" or "1 2") from the UI and are parsed to lists.
+    If those are empty, default values will be used (matching prior defaults).
     """
 
     @classmethod
     def INPUT_TYPES(s):
-        # --- MODIFICATION: Rearranged inputs and updated defaults to match the reference image ---
+        # Keep most of the core image-processing parameters here; camera/NS options have been moved out.
         return {
             "required": {
                 "image": ("IMAGE",),
 
-                # Parameters
+                # High-level toggles for using the external nodes
+                "Cam_Opt": ("CAMERAOPT", ),
+                "NS_Opt": ("NONSEMANTICOP", ),
+
+                # Parameters (noise / clahe / fourier / etc.)
+                "apply_noise_o": ("BOOLEAN", {"default": True}),
                 "noise_std_frac": ("FLOAT", {"default": 0.02, "min": 0.0, "max": 0.1, "step": 0.001}),
+                "apply_clahe_o": ("BOOLEAN", {"default": True}),
                 "clahe_clip": ("FLOAT", {"default": 2.00, "min": 0.5, "max": 10.0, "step": 0.1}),
                 "clahe_grid": ("INT", {"default": 8, "min": 2, "max": 32, "step": 1}),
                 "fourier_cutoff": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -49,7 +108,8 @@ class NovaNodes:
                 "fourier_alpha": ("FLOAT", {"default": 1.00, "min": 0.1, "max": 4.0, "step": 0.1}),
                 "perturb_mag_frac": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 0.05, "step": 0.001}),
                 "enable_awb": ("BOOLEAN", {"default": True}),
-                "sim_camera": ("BOOLEAN", {"default": True}), # This corresponds to "Enable camera pipeline simulation"
+
+
                 "enable_lut": ("BOOLEAN", {"default": True}),
                 "lut": ("STRING", {"default": "X://insert/path/here(.png/.npy/.cube)", "vhs_path_extensions": lut_extensions}),
                 "lut_strength": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -64,24 +124,8 @@ class NovaNodes:
                 "lbp_method": (["default", "ror", "uniform", "var"], {"default": "uniform"}),
                 "lbp_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
 
-                # Camera simulator options - Order and defaults match the image
-                "enable_bayer": ("BOOLEAN", {"default": True}),
-                "apply_jpeg_cycles_o": ("BOOLEAN", {"default": True}),
-                "jpeg_cycles": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
-                "jpeg_quality": ("INT", {"default": 88, "min": 10, "max": 100, "step": 1}),
-                "apply_vignette_o": ("BOOLEAN", {"default": True}),
-                "vignette_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "apply_chromatic_aberration_o": ("BOOLEAN", {"default": True}),
-                "ca_shift": ("FLOAT", {"default": 1.20, "min": 0.0, "max": 5.0, "step": 0.1}),
-                "iso_scale": ("FLOAT", {"default": 1.00, "min": 0.1, "max": 16.0, "step": 0.1}),
-                "read_noise": ("FLOAT", {"default": 2.00, "min": 0.0, "max": 50.0, "step": 0.1}),
-                "hot_pixel_prob": ("FLOAT", {"default": 1e-7, "min": 0.0, "max": 1e-3, "step": 1e-7}),
-                "apply_banding_o": ("BOOLEAN", {"default": True}),
-                "banding_strength": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "apply_motion_blur_o": ("BOOLEAN", {"default": True}),
-                "motion_blur_ksize": ("INT", {"default": 1, "min": 1, "max": 31, "step": 2}),
-
-                # Other options
+                # seed, exif
+                "seed": ("INT", {"default": -1, "min": -1, "max": 2**31-1, "step": 1}),
                 "apply_exif_o": ("BOOLEAN", {"default": True}),
             },
             "optional": {
@@ -95,8 +139,41 @@ class NovaNodes:
     FUNCTION = "process"
     CATEGORY = "postprocessing"
 
+    # default blocks for Camera and NS so the main node works even if user doesn't plug the helper nodes
+    CAM_DEFAULTS = {
+        "enable_bayer": True,
+        "apply_jpeg_cycles_o": True,
+        "jpeg_cycles": 1,
+        "jpeg_quality": 88,
+        "jpeg_qmax": 96,
+        "apply_vignette_o": True,
+        "vignette_strength": 0.35,
+        "apply_chromatic_aberration_o": True,
+        "ca_shift": 1.20,
+        "iso_scale": 1.0,
+        "read_noise": 2.0,
+        "hot_pixel_prob": 1e-7,
+        "apply_banding_o": True,
+        "banding_strength": 0.0,
+        "apply_motion_blur_o": True,
+        "motion_blur_ksize": 1,
+    }
+
+    NS_DEFAULTS = {
+        "non_semantic": False,
+        "ns_iterations": 500,
+        "ns_learning_rate": 3e-4,
+        "ns_t_lpips": 4e-2,
+        "ns_t_l2": 3e-5,
+        "ns_c_lpips": 1e-2,
+        "ns_c_l2": 0.6,
+        "ns_grad_clip": 0.05,
+    }
+
     def process(self, image,
+                apply_noise_o=True,
                 noise_std_frac=0.02,
+                apply_clahe_o=True,
                 clahe_clip=2.0,
                 clahe_grid=8,
                 fourier_cutoff=0.25,
@@ -109,7 +186,8 @@ class NovaNodes:
                 fourier_alpha=1.0,
                 perturb_mag_frac=0.01,
                 enable_awb=True,
-                sim_camera=True,
+                Cam_Opt="",
+                NS_Opt="",
                 enable_lut=True,
                 lut="",
                 lut_strength=1.0,
@@ -123,21 +201,7 @@ class NovaNodes:
                 lbp_n_points=24,
                 lbp_method="uniform",
                 lbp_strength=0.9,
-                enable_bayer=True,
-                apply_jpeg_cycles_o=True,
-                jpeg_cycles=1,
-                jpeg_quality=88,
-                apply_vignette_o=True,
-                vignette_strength=0.35,
-                apply_chromatic_aberration_o=True,
-                ca_shift=1.20,
-                iso_scale=1.0,
-                read_noise=2.0,
-                hot_pixel_prob=1e-7,
-                apply_banding_o=True,
-                banding_strength=0.0,
-                apply_motion_blur_o=True,
-                motion_blur_ksize=1,
+                seed=-1,
                 apply_exif_o=True,
                 awb_ref_image=None,
                 fft_ref_image=None
@@ -146,55 +210,26 @@ class NovaNodes:
         if process_image is None:
             raise ImportError(f"Could not import process_image function: {IMPORT_ERROR}")
 
+        # Parse Cam_Opt and NS_Opt JSON strings into dicts and merge with defaults
+        cam_opts = dict(self.CAM_DEFAULTS)
+        if isinstance(Cam_Opt, str) and Cam_Opt.strip() != "":
+            try:
+                loaded = json.loads(Cam_Opt)
+                if isinstance(loaded, dict):
+                    cam_opts.update(loaded)
+            except Exception:
+                pass
+
+        ns_opts = dict(self.NS_DEFAULTS)
+        if isinstance(NS_Opt, str) and NS_Opt.strip() != "":
+            try:
+                loaded = json.loads(NS_Opt)
+                if isinstance(loaded, dict):
+                    ns_opts.update(loaded)
+            except Exception:
+                pass
+
         tmp_files = []
-
-        def to_pil_from_any(inp):
-            """Convert a torch tensor / numpy array of many shapes into a PIL RGB Image."""
-            if isinstance(inp, torch.Tensor):
-                arr = inp.detach().cpu().numpy()
-            else:
-                arr = np.asarray(inp)
-            if arr.ndim == 4 and arr.shape[0] == 1:
-                arr = arr[0]
-            if arr.ndim == 3 and arr.shape[0] in (1, 3):
-                arr = np.transpose(arr, (1, 2, 0))
-            if arr.ndim == 2:
-                arr = arr[:, :, None]
-            if arr.ndim != 3:
-                raise TypeError(f"Cannot convert array to HWC image, final ndim={arr.ndim}, shape={arr.shape}")
-            if np.issubdtype(arr.dtype, np.floating):
-                if arr.max() <= 1.0:
-                    arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
-                else:
-                    arr = np.clip(arr, 0, 255).astype(np.uint8)
-            else:
-                arr = arr.astype(np.uint8)
-            if arr.shape[2] == 1:
-                arr = np.repeat(arr, 3, axis=2)
-            return Image.fromarray(arr)
-
-        # utility parsers for list-like UI inputs
-        def _parse_int_list(val):
-            if isinstance(val, (list, tuple)):
-                return [int(x) for x in val]
-            if isinstance(val, (int, np.integer)):
-                return [int(val)]
-            s = str(val).strip()
-            if s == "":
-                return []
-            parts = [p for p in s.replace(',', ' ').split() if p != ""]
-            return [int(p) for p in parts]
-
-        def _parse_float_list(val):
-            if isinstance(val, (list, tuple)):
-                return [float(x) for x in val]
-            if isinstance(val, (float, int, np.floating, np.integer)):
-                return [float(val)]
-            s = str(val).strip()
-            if s == "":
-                return []
-            parts = [p for p in s.replace(',', ' ').split() if p != ""]
-            return [float(p) for p in parts]
 
         try:
             # ---- Input image -> temporary input file ----
@@ -231,60 +266,80 @@ class NovaNodes:
             parsed_glcm_distances = _parse_int_list(glcm_distances)
             parsed_glcm_angles = _parse_float_list(glcm_angles)
 
-            # Prepare args for process_image with updated keys
+            # Prepare args for process_image with updated keys (matches build_argparser())
             args = SimpleNamespace(
+                # positional
                 input=input_path,
                 output=output_path,
-                awb=enable_awb,  # Explicit AWB flag
+
+                # AWB / refs
+                awb=bool(enable_awb),
                 ref=awb_ref_path,
-                noise_std=noise_std_frac,  # renamed from noise_std_frac
-                noise=True,  # enable Gaussian noise (--noise)
-                clahe=True,  # enable CLAHE (--clahe)
-                clahe_clip=clahe_clip,
-                tile=clahe_grid,
-                fft=apply_fourier_o,  # enable FFT spectral matching (--fft)
-                fstrength=fourier_strength if apply_fourier_o else 0.0,
-                randomness=fourier_randomness,
-                phase_perturb=fourier_phase_perturb,
-                fft_alpha=fourier_alpha,
-                cutoff=fourier_cutoff,
-                radial_smooth=fourier_radial_smooth,
-                fft_mode=fourier_mode,
                 fft_ref=fft_ref_path,
-                perturb=(True if perturb_mag_frac > 0 else False),  # flag for perturbation (--perturb)
-                perturb_magnitude=perturb_mag_frac,  # perturb magnitude (--perturb-magnitude)
-                vignette_strength=vignette_strength if apply_vignette_o else 0.0,
-                chroma_strength=ca_shift if apply_chromatic_aberration_o else 0.0,
-                banding_strength=banding_strength if apply_banding_o else 0.0,
-                motion_blur_kernel=motion_blur_ksize if apply_motion_blur_o else 1,
-                jpeg_cycles=jpeg_cycles if apply_jpeg_cycles_o else 1,
-                jpeg_qmin=jpeg_quality,
-                jpeg_qmax=96,  # as per image range
-                sim_camera=sim_camera,
-                no_no_bayer=not enable_bayer,  # inverted logic corrected
-                iso_scale=iso_scale,
-                read_noise=read_noise,
-                seed=None,  # Seed is not user-configurable in this version
-                lut=(lut if enable_lut and lut != "" else None),
-                lut_strength=lut_strength,
+
+                # basic corrections / noise / CLAHE
+                noise_std=float(noise_std_frac),
+                noise=bool(apply_noise_o),
+                clahe=bool(apply_clahe_o),
+                clahe_clip=float(clahe_clip),
+                tile=int(clahe_grid),
+
+                # Fourier / FFT matching
+                fft=bool(apply_fourier_o),
+                fstrength=float(fourier_strength) if apply_fourier_o else 0.0,
+                randomness=float(fourier_randomness),
+                seed=(None if int(seed) < 0 else int(seed)),
+                fft_mode=str(fourier_mode),
+                fft_alpha=float(fourier_alpha),
+                phase_perturb=float(fourier_phase_perturb),
+                radial_smooth=int(fourier_radial_smooth),
+                cutoff=float(fourier_cutoff),
+
+                # GLCM
                 glcm=bool(glcm),
                 glcm_distances=parsed_glcm_distances,
                 glcm_angles=parsed_glcm_angles,
                 glcm_levels=int(glcm_levels),
                 glcm_strength=float(glcm_strength),
+
+                # LBP
                 lbp=bool(lbp),
                 lbp_radius=int(lbp_radius),
                 lbp_n_points=int(lbp_n_points),
                 lbp_method=str(lbp_method),
                 lbp_strength=float(lbp_strength),
-                non_semantic=False,  # non-semantic attack disabled by default
-                ns_iterations=500,
-                ns_learning_rate=3e-4,
-                ns_t_lpips=4e-2,
-                ns_t_l2=3e-5,
-                ns_c_lpips=1e-2,
-                ns_c_l2=0.6,
-                ns_grad_clip=0.05,
+
+                # Non-semantic attack (from ns_opts)
+                non_semantic=bool(ns_opts.get("non_semantic", False)),
+                ns_iterations=int(ns_opts.get("ns_iterations", 500)),
+                ns_learning_rate=float(ns_opts.get("ns_learning_rate", 3e-4)),
+                ns_t_lpips=float(ns_opts.get("ns_t_lpips", 4e-2)),
+                ns_t_l2=float(ns_opts.get("ns_t_l2", 3e-5)),
+                ns_c_lpips=float(ns_opts.get("ns_c_lpips", 1e-2)),
+                ns_c_l2=float(ns_opts.get("ns_c_l2", 0.6)),
+                ns_grad_clip=float(ns_opts.get("ns_grad_clip", 0.05)),
+
+                # Camera simulator options (from cam_opts)
+                sim_camera=True,
+                no_no_bayer=not bool(cam_opts.get("enable_bayer", True)),
+                jpeg_cycles=int(cam_opts.get("jpeg_cycles", 1)) if bool(cam_opts.get("apply_jpeg_cycles_o", True)) else 1,
+                jpeg_qmin=int(cam_opts.get("jpeg_quality", 88)),
+                jpeg_qmax=int(cam_opts.get("jpeg_qmax", 96)),
+                vignette_strength=float(cam_opts.get("vignette_strength", 0.35)) if bool(cam_opts.get("apply_vignette_o", True)) else 0.0,
+                chroma_strength=float(cam_opts.get("ca_shift", 1.20)) if bool(cam_opts.get("apply_chromatic_aberration_o", True)) else 0.0,
+                iso_scale=float(cam_opts.get("iso_scale", 1.0)),
+                read_noise=float(cam_opts.get("read_noise", 2.0)),
+                hot_pixel_prob=float(cam_opts.get("hot_pixel_prob", 1e-7)),
+                banding_strength=float(cam_opts.get("banding_strength", 0.0)) if bool(cam_opts.get("apply_banding_o", True)) else 0.0,
+                motion_blur_kernel=int(cam_opts.get("motion_blur_ksize", 1)) if bool(cam_opts.get("apply_motion_blur_o", True)) else 1,
+
+                # LUT
+                lut=(lut if enable_lut and lut != "" else None),
+                lut_strength=float(lut_strength),
+
+                # utility flags (positive-style equivalents)
+                perturb=(True if perturb_mag_frac > 0 else False),
+                perturb_magnitude=float(perturb_mag_frac),
             )
 
             # ---- Run the processing function ----
@@ -354,7 +409,11 @@ class NovaNodes:
 # -------------
 NODE_CLASS_MAPPINGS = {
     "NovaNodes": NovaNodes,
+    "CameraOptionsNode": CameraOptionsNode,
+    "NSOptionsNode": NSOptionsNode,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NovaNodes": "Image Postprocess (NOVA NODES)",
+    "CameraOptionsNode": "Camera Options (NOVA)",
+    "NSOptionsNode": "Non-semantic Options (NOVA)",
 }
