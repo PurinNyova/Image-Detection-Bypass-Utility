@@ -90,19 +90,6 @@ def process_image(path_in, path_out, args):
         except Exception as e:
             print(f"Warning: Non-semantic attack failed: {e}. Skipping non-semantic attack.")
 
-    # --- Auto white-balance (if enabled) ---
-    if args.awb:
-        if args.ref:
-            try:
-                ref_img_awb = Image.open(args.ref).convert('RGB')
-                ref_arr_awb = np.array(ref_img_awb)
-                arr = auto_white_balance_ref(arr, ref_arr_awb)
-            except Exception as e:
-                print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
-        else:
-            print("Applying AWB using grey-world assumption...")
-            arr = auto_white_balance_ref(arr, None)
-
     # --- CLAHE color correction (if enabled) ---
     if args.clahe:
         arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
@@ -149,6 +136,19 @@ def process_image(path_in, path_out, args):
                                        banding_strength=args.banding_strength,
                                        motion_blur_kernel=args.motion_blur_kernel,
                                        seed=args.seed)
+        
+    # --- Auto white-balance (if enabled) ---
+    if args.awb:
+        if args.ref:
+            try:
+                ref_img_awb = Image.open(args.ref).convert('RGB')
+                ref_arr_awb = np.array(ref_img_awb)
+                arr = auto_white_balance_ref(arr, ref_arr_awb)
+            except Exception as e:
+                print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
+        else:
+            print("Applying AWB using grey-world assumption...")
+            arr = auto_white_balance_ref(arr, None)
 
     # LUT application
     if args.lut:
