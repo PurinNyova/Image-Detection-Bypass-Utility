@@ -664,6 +664,9 @@ class MainWindow(QMainWindow):
             args.iso_scale = 1.0
             args.read_noise = 2.0
             args.hot_pixel_prob = 1e-6
+            args.clahe = True
+            args.noise = True
+            args.fft = True
         else:
             seed_val = int(self.seed_spin.value())
             args.seed = None if seed_val == 0 else seed_val
