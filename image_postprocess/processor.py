@@ -173,7 +173,7 @@ def build_argparser():
     p.add_argument('output', help='Output image path')
 
     # AWB Options
-    p.add_argument('--awb', action='store_true', help='Enable automatic white balancing. Uses grey-world if --ref is not provided.')
+    p.add_argument('--awb', action='store_true', default=False, help='Enable automatic white balancing. Uses grey-world if --ref is not provided.')
     p.add_argument('--ref', help='Optional reference image for auto white-balance (only used if --awb is enabled)', default=None)
     
     p.add_argument('--noise-std', type=float, default=0.02, help='Gaussian noise std fraction of 255 (0-0.1)')
@@ -192,21 +192,21 @@ def build_argparser():
     p.add_argument('--radial-smooth', type=int, default=5, help='Radial smoothing (bins) for spectrum profiles')
 
     # GLCM normalization options
-    p.add_argument('--glcm', action='store_true', help='Enable GLCM normalization using FFT reference if available')
+    p.add_argument('--glcm', action='store_true', default=False, help='Enable GLCM normalization using FFT reference if available')
     p.add_argument('--glcm-distances', type=int, nargs='+', default=[1], help='Distances for GLCM computation')
     p.add_argument('--glcm-angles', type=float, nargs='+', default=[0, np.pi/4, np.pi/2, 3*np.pi/4], help='Angles for GLCM computation (in radians)')
     p.add_argument('--glcm-levels', type=int, default=256, help='Number of gray levels for GLCM')
     p.add_argument('--glcm-strength', type=float, default=0.9, help='Strength of GLCM feature matching (0..1)')
 
     # LBP normalization options
-    p.add_argument('--lbp', action='store_true', help='Enable LBP normalization using FFT reference if available')
+    p.add_argument('--lbp', action='store_true', default=False, help='Enable LBP normalization using FFT reference if available')
     p.add_argument('--lbp-radius', type=int, default=3, help='Radius of LBP operator')
     p.add_argument('--lbp-n-points', type=int, default=24, help='Number of circularly symmetric neighbor set points for LBP')
     p.add_argument('--lbp-method', choices=('default', 'ror', 'uniform', 'var'), default='uniform', help='LBP method')
     p.add_argument('--lbp-strength', type=float, default=0.9, help='Strength of LBP histogram matching (0..1)')
 
     # Non-semantic attack options
-    p.add_argument('--non-semantic', action='store_true', help='Apply non-semantic attack on the image')
+    p.add_argument('--non-semantic', action='store_true', default=False, help='Apply non-semantic attack on the image')
     p.add_argument('--ns-iterations', type=int, default=500, help='Iterations for non-semantic attack')
     p.add_argument('--ns-learning-rate', type=float, default=3e-4, help='Learning rate for non-semantic attack')
     p.add_argument('--ns-t-lpips', type=float, default=4e-2, help='LPIPS threshold for non-semantic attack')
@@ -216,7 +216,7 @@ def build_argparser():
     p.add_argument('--ns-grad-clip', type=float, default=0.05, help='Gradient clipping value for non-semantic attack')
 
     # Camera-simulator options
-    p.add_argument('--sim-camera', action='store_true', help='Enable camera-pipeline simulation (Bayer, CA, vignette, JPEG cycles)')
+    p.add_argument('--sim-camera', action='store_true', default=False, help='Enable camera-pipeline simulation (Bayer, CA, vignette, JPEG cycles)')
     p.add_argument('--no-no-bayer', dest='no_no_bayer', action='store_false', help='Disable Bayer/demosaic step (double negative kept for backward compat)')
     p.set_defaults(no_no_bayer=True)
     p.add_argument('--jpeg-cycles', type=int, default=1, help='Number of JPEG recompression cycles to apply')
@@ -235,10 +235,10 @@ def build_argparser():
     p.add_argument('--lut-strength', type=float, default=0.1, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
 
     # New positive flags to enable utils functions
-    p.add_argument('--noise', action='store_true', help='Enable Gaussian noise addition')
-    p.add_argument('--clahe', action='store_true', help='Enable CLAHE color correction')
-    p.add_argument('--fft', action='store_true', help='Enable FFT spectral matching')
-    p.add_argument('--perturb', action='store_true', help='Enable randomized perturbation')
+    p.add_argument('--noise', action='store_true', default=False, help='Enable Gaussian noise addition')
+    p.add_argument('--clahe', action='store_true', default=False, help='Enable CLAHE color correction')
+    p.add_argument('--fft', action='store_true', default=False, help='Enable FFT spectral matching')
+    p.add_argument('--perturb', action='store_true', default=False, help='Enable randomized perturbation')
     p.add_argument('--perturb-magnitude', type=float, default=0.008, help='Randomized perturb magnitude fraction (0..0.05)')
 
     return p
