@@ -7,7 +7,6 @@ Handles the import check for image_postprocess and launches the MainWindow.
 import sys
 from pathlib import Path
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from theme import apply_dark_palette
 
 try:
     from image_postprocess import process_image
@@ -16,7 +15,7 @@ except Exception as e:
 else:
     IMPORT_ERROR = None
 
-from main_window import MainWindow
+from ui_utils import MainWindow, apply_dark_palette
 
 def main():
     app = QApplication([])
