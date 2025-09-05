@@ -20,7 +20,7 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 ![Screenshot](https://i.imgur.com/y0tuDcK.png)
 
 ## Notice
-Due to the nature of this project, future updates will be under GPL V3 license to ensure this project and its derivatives remains Open Source.
+Due to the nature of this project, future updates will be under AGPL V3 license to ensure this project and its derivatives remains Open Source.
 
 ## Features
 
