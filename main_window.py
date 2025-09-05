@@ -526,7 +526,9 @@ class MainWindow(QMainWindow):
         self.motion_blur_spin.setValue(get("CameraSimulator", "motion_blur_kernel", 1, int))
         cam_layout.addRow("Motion blur kernel", self.motion_blur_spin)
 
-        self.camera_box.setVisible(False)
+        self.camera_box.setVisible(getbool("CameraSimulator", "enabled", False))
+        self.params_box.setVisible(not getbool("General", "auto_mode", True))
+        self.texture_box.setVisible(not getbool("General", "auto_mode", True))
 
         self.ref_hint = QLabel("AWB uses the 'AWB reference' chooser. FFT spectral matching uses the 'FFT Reference' chooser.")
         right_v.addWidget(self.ref_hint)
@@ -558,6 +560,7 @@ class MainWindow(QMainWindow):
         self.auto_box.setVisible(is_auto)
         self.params_box.setVisible(not is_auto)
         self.texture_box.setVisible(not is_auto)
+        self.camera_box.setVisible(not is_auto)
 
     def _update_strength_label(self, value):
         self.strength_label.setText(str(value))
@@ -631,14 +634,13 @@ class MainWindow(QMainWindow):
             args.cutoff = max(0.01, 0.4 - strength * 0.3)
             args.fstrength = strength * 0.95
             args.phase_perturb = strength * 0.1
-            # Update perturb: now separate flag and magnitude
             args.perturb = True
             args.perturb_magnitude = strength * 0.015
             args.jpeg_cycles = int(strength * 2)
             args.jpeg_qmin = max(1, int(95 - strength * 35))
             args.jpeg_qmax = max(1, int(99 - strength * 25))
             args.vignette_strength = strength * 0.6
-            args.chroma_strength = strength * 4.0
+            args.chroma_strength = strength * 2.0
             args.motion_blur_kernel = 1 + 2 * int(strength * 6)
             args.banding_strength = strength * 0.1
             args.tile = 8
@@ -659,7 +661,7 @@ class MainWindow(QMainWindow):
             args.lbp_strength = 0.9
             seed_val = int(self.seed_spin.value())
             args.seed = None if seed_val == 0 else seed_val
-            args.sim_camera = bool(self.sim_camera_chk.isChecked())
+            args.sim_camera = True
             args.no_no_bayer = True
             args.iso_scale = 1.0
             args.read_noise = 2.0
