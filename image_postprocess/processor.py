@@ -24,7 +24,9 @@ from .utils import (
     apply_lut,
     glcm_normalize,
     lbp_normalize,
-    attack_non_semantic
+    attack_non_semantic,
+    blend_colors
+    
 )
 from .camera_pipeline import simulate_camera_pipeline
 
@@ -72,6 +74,14 @@ def process_image(path_in, path_out, args):
         except Exception as e:
             print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
             ref_arr_fft = None
+
+    # blend system
+    if args.blend:
+        try:
+            arr = blend_colors(arr, tolerance=args.blend_tolerance, min_region_size=args.blend_min_region,
+                               max_kmeans_samples=args.blend_max_samples, n_jobs=args.blend_n_jobs)
+        except Exception as e:
+            print(f"Warning: Blending failed: {e}. Skipping blending.")
 
     # --- Non-semantic attack (if enabled) executed first ---
     if args.non_semantic:
@@ -240,6 +250,13 @@ def build_argparser():
     p.add_argument('--fft', action='store_true', default=False, help='Enable FFT spectral matching')
     p.add_argument('--perturb', action='store_true', default=False, help='Enable randomized perturbation')
     p.add_argument('--perturb-magnitude', type=float, default=0.008, help='Randomized perturb magnitude fraction (0..0.05)')
+
+    # Blending options
+    p.add_argument('--blend', action='store_true', default=False, help='Enable color')
+    p.add_argument('--blend-tolerance', type=float, default=10.0, help='Color tolerance for blending (smaller = more colors)')
+    p.add_argument('--blend-min-region', type=int, default=50, help='Minimum region size to retain (in pixels)')
+    p.add_argument('--blend-max-samples', type=int, default=100000, help='Maximum pixels to sample for k-means (for speed)')
+    p.add_argument('--blend-n-jobs', type=int, default=None, help='Number of worker threads for blending (default: os.cpu_count())')
 
     return p
 

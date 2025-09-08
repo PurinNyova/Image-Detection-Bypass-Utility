@@ -21,6 +21,7 @@ from utils import qpixmap_from_path
 from .theme import apply_dark_palette
 import numpy as np
 import configparser
+import math
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -44,7 +45,7 @@ class MainWindow(QMainWindow):
                 return default
 
         # --- Window ---
-        self.setWindowTitle("Image Detection Bypass Utility V1.3R3")
+        self.setWindowTitle("Image Detection Bypass Utility V1.4 Alpha 1")
         self.setMinimumSize(1200, 760)
 
         central = QWidget()
@@ -148,6 +149,43 @@ class MainWindow(QMainWindow):
         strength_layout.addWidget(self.strength_slider)
         strength_layout.addWidget(self.strength_label)
         auto_layout.addRow("Aberration Strength", strength_layout)
+
+        # Blend system
+        self.blend_box = CollapsibleBox("Blend Color")
+        right_v.addWidget(self.blend_box)
+        blend_layout = QFormLayout()
+        blend_container = QWidget()
+        blend_container.setLayout(blend_layout)
+        self.blend_box.content_layout.addWidget(blend_container)
+
+        self.blend_chk = QCheckBox("Enable Color Blending")
+        self.blend_chk.setToolTip("Color blending makes clusters of similar colors be one color")
+        self.blend_chk.setChecked(getbool("Blend", "enabled", False))
+        blend_layout.addRow(self.blend_chk)
+
+        self.blend_tolerance = QSpinBox()
+        self.blend_tolerance.setRange(1, 100)
+        self.blend_tolerance.setValue(get("Blend", "tolerance", 10, int))
+        self.blend_tolerance.setToolTip("Color tolerance for blending (smaller = more colors)")
+        blend_layout.addRow("Color Tolerance", self.blend_tolerance)
+
+        self.blend_min_region = QSpinBox()
+        self.blend_min_region.setRange(1, 1000)
+        self.blend_min_region.setValue(get("Blend", "min_region", 50, int))
+        self.blend_min_region.setToolTip("Minimum region size to retain (in pixels)")
+        blend_layout.addRow("Min Region Size", self.blend_min_region)
+
+        self.blend_max_samples = QSpinBox()
+        self.blend_max_samples.setRange(1000, 1000000)
+        self.blend_max_samples.setValue(get("Blend", "max_samples", 100000, int))
+        self.blend_max_samples.setToolTip("Maximum pixels to sample for k-means (for speed)")
+        blend_layout.addRow("Max Samples", self.blend_max_samples)
+
+        self.blend_n_jobs = QSpinBox()
+        self.blend_n_jobs.setRange(1, os.cpu_count() or 4)
+        self.blend_n_jobs.setValue(get("Blend", "n_jobs", os.cpu_count() or 4, int))
+        self.blend_n_jobs.setToolTip("Number of worker threads for blending (default: os.cpu_count())")
+        blend_layout.addRow("Worker Threads", self.blend_n_jobs)
 
         # AI Normalizer
         self.ai_norm_box = CollapsibleBox("AI Normalizer")
@@ -561,6 +599,7 @@ class MainWindow(QMainWindow):
         self.params_box.setVisible(not is_auto)
         self.texture_box.setVisible(not is_auto)
         self.camera_box.setVisible(not is_auto)
+        self.blend_box.setVisible(not is_auto)
 
     def _update_strength_label(self, value):
         self.strength_label.setText(str(value))
@@ -669,6 +708,11 @@ class MainWindow(QMainWindow):
             args.clahe = True
             args.noise = True
             args.fft = True
+            args.blend = True
+            args.blend_tolerance = int(math.ceil(10*strength))
+            args.blend_min_region = int(math.ceil(-5.1111 / max(strength, 0.1) + 55.1111))
+            args.blend_max_samples = int(444444.4444 * min(max(strength, 0.1), 1.0) + 55555.5556)
+            args.blend_n_jobs = os.cpu_count() or 4
         else:
             seed_val = int(self.seed_spin.value())
             args.seed = None if seed_val == 0 else seed_val
@@ -714,6 +758,11 @@ class MainWindow(QMainWindow):
             args.fft = self.fft_enable_chk.isChecked()
             args.perturb = self.perturb_enable_chk.isChecked()
             args.perturb_magnitude = float(self.perturb_spin.value())
+            args.blend = bool(self.blend_chk.isChecked())
+            args.blend_tolerance = int(self.blend_tolerance.value())
+            args.blend_min_region = int(self.blend_min_region.value())
+            args.blend_max_samples = int(self.blend_max_samples.value())
+            args.blend_n_jobs = int(self.blend_n_jobs.value())
 
         # AI Normalizer
         args.non_semantic = bool(self.ns_chk.isChecked())
