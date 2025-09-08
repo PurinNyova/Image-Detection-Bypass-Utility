@@ -9,9 +9,11 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 ![NumPy](https://img.shields.io/badge/NumPy-latest-lightgrey)
 ![Matplotlib](https://img.shields.io/badge/Matplotlib-latest-lightgrey)
 ![piexif](https://img.shields.io/badge/piexif-latest-lightgrey)
+![SciPy](https://img.shields.io/badge/SciPy-latest-lightgrey)
 ![OpenCV](https://img.shields.io/badge/OpenCV-latest-darkgreen)
 ![Torch 2.8.0+cu126](https://img.shields.io/badge/Torch-2.8.0%2Bcu126-red)
 ![TorchVision 0.23.0+cu126](https://img.shields.io/badge/TorchVision-0.23.0%2Bcu126-orange)
+
 
 ---
 
@@ -232,64 +234,6 @@ When enabled, the AI Normalizer applies a non-semantic attack using PyTorch and 
 * **C LPIPS** — Weighting factor for the LPIPS loss penalty.
 * **C L2** — Weighting factor for the L2 loss penalty.
 * **Gradient Clip** — Maximum allowed gradient value during optimization to prevent exploding gradients.
-
----
-
-## Parameters / Controls → `args` mapping
-
-When you click **Run**, the GUI builds a lightweight argument namespace (similar to a `SimpleNamespace`) and passes it to the worker. Below are the important mappings used by the GUI (so you know what your `process_image` should expect):
-
-* `args.input` — Input image path (string)
-* `args.output` — Output image path (string)
-* `args.awb` — Toggle for automatic white balancing (bool, enables grey-world if `--ref` is not provided)
-* `args.ref` — Path to auto white-balance reference image (string) or `None`
-* `args.noise-std` — Gaussian noise std fraction of 255 (0–0.1)
-* `args.clahe-clip` — CLAHE clip limit for contrast enhancement
-* `args.tile` — CLAHE tile grid size for contrast enhancement
-* `args.cutoff` — Fourier cutoff frequency (0.01–1.0) for spectral processing
-* `args.fstrength` — Fourier blend strength (0–1) for spectral processing
-* `args.randomness` — Randomness factor for Fourier mask modulation
-* `args.seed` — Integer seed for reproducibility or `None` when seed==0 in UI
-* `args.fft-ref` — Path to reference image for FFT spectral matching, GLCM, and LBP (string) or `None`
-* `args.fft-mode` — FFT spectral matching mode: one of `auto`, `ref`, or `model`
-* `args.fft-alpha` — Alpha exponent for 1/f model (spectrum slope, used when `fft-mode=='model'`)
-* `args.phase-perturb` — Phase perturbation strength (radians) for FFT processing
-* `args.radial-smooth` — Radial smoothing bins for spectrum profiles in FFT matching
-* `args.glcm` — Enable GLCM normalization using FFT reference if available (bool)
-* `args.glcm-distances` — List[int]: distances used to compute GLCM (e.g., `[1]` or `[1,2,3]`)
-* `args.glcm-angles` — List[float]: angles (radians) used to compute GLCM (e.g., `[0, np.pi/4]`)
-* `args.glcm-levels` — Number of quantized gray levels for GLCM (int)
-* `args.glcm-strength` — Blending strength for GLCM feature matching (0–1) (float)
-* `args.lbp` — Enable LBP normalization using FFT reference if available (bool)
-* `args.lbp-radius` — Radius of the LBP operator (int)
-* `args.lbp-n-points` — Number of sampling points for LBP (int)
-* `args.lbp-method` — LBP computation method: `default`, `ror`, `uniform`, or `var` (string)
-* `args.lbp-strength` — Blending strength for LBP histogram matching (0–1) (float)
-* `args.non-semantic` — Apply non-semantic attack on the image (bool)
-* `args.ns-iterations` — Number of iterations for non-semantic attack (int)
-* `args.ns-learning-rate` — Learning rate for non-semantic attack (float)
-* `args.ns-t-lpips` — LPIPS threshold for non-semantic attack (float)
-* `args.ns-t-l2` — L2 threshold for non-semantic attack (float)
-* `args.ns-c-lpips` — LPIPS constant for non-semantic attack (float)
-* `args.ns-c-l2` — L2 constant for non-semantic attack (float)
-* `args.ns-grad-clip` — Gradient clipping value for non-semantic attack (float)
-* `args.noise` — Enable Gaussian noise addition (bool)
-* `args.perturb` — Enable randomized pixel perturbation (bool)
-* `args.perturb-magnitude` — Randomized perturb magnitude fraction (0–0.05) (float)
-* `args.sim-camera` — Enable camera-pipeline simulation (bool; applies Bayer, chromatic aberration, vignette, JPEG cycles, etc.)
-* `args.no-no-bayer` — Toggle for Bayer/demosaic step (bool)
-* `args.jpeg-cycles` — Number of JPEG recompression cycles (int)
-* `args.jpeg-qmin` — Minimum JPEG quality (int)
-* `args.jpeg-qmax` — Maximum JPEG quality (int)
-* `args.vignette-strength` — Vignette intensity (0–1) (float)
-* `args.chroma-strength` — Chromatic aberration strength in pixels (float)
-* `args.iso-scale` — Exposure multiplier for Poisson noise in camera simulation (float)
-* `args.read-noise` — Sensor read noise sigma (float)
-* `args.hot-pixel-prob` — Per-pixel probability of hot pixels (float)
-* `args.banding-strength` — Horizontal banding amplitude (0–1) (float)
-* `args.motion-blur-kernel` — Motion blur kernel size (1 = none) (int)
-* `args.lut` — Path to a LUT file (1D PNG, `.npy` LUT, or `.cube` 3D LUT) (string) or `None`
-* `args.lut-strength` — Strength to blend the LUT (0.0 = no effect, 1.0 = full LUT) (float)
 
 ---
 
