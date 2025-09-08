@@ -8,6 +8,7 @@ from .perturbation import randomized_perturbation
 from .glcm_normalization import glcm_normalize
 from .lbp_normalization import lbp_normalize
 from .non_semantic_unmarker import attack_non_semantic
+from .blend import blend_colors
 
 __all__ = [
     'auto_white_balance_ref',
@@ -20,5 +21,6 @@ __all__ = [
     'randomized_perturbation',
     'glcm_normalize',
     'lbp_normalize',
-    'non_semantic_unmarker',
+    'attack_non_semantic',
+    'blend_colors',
 ]

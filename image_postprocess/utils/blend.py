@@ -2,8 +2,8 @@ import numpy as np
 from scipy.cluster.vq import kmeans2
 from scipy.ndimage import label, mean as ndi_mean
 from scipy.spatial import cKDTree
-from PIL import Image
-import argparse
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Vectorized color conversions
 def rgb_to_hsv(rgb: np.ndarray) -> np.ndarray:
@@ -86,9 +86,13 @@ def hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     return rgb
 
 # Main blending pipeline
-def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: int = 50,
-                 max_kmeans_samples: int = 100000) -> np.ndarray:
 
+def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: int = 50,
+                          max_kmeans_samples: int = 100000, n_jobs: int | None = None) -> np.ndarray:
+    """
+    Parallelized version of blend_colors.
+    n_jobs: number of worker threads (None -> os.cpu_count()).
+    """
     if not isinstance(image, np.ndarray) or image.dtype != np.uint8 or image.ndim != 3:
         raise ValueError("Input must be a 3D NumPy array with uint8 dtype (H, W, C)")
 
@@ -99,139 +103,121 @@ def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: in
     pixels = img_f.reshape(-1, 3)
     n_pixels = pixels.shape[0]
 
-    # Determine number of clusters similar to original
     num_clusters = max(1, int(256 / tolerance))
 
-    # Subsample pixels for k-means (faster)
+    # Subsample for kmeans
     rng = np.random.default_rng(seed=12345)
     if n_pixels > max_kmeans_samples:
         sample_idx = rng.choice(n_pixels, size=max_kmeans_samples, replace=False)
     else:
         sample_idx = np.arange(n_pixels)
-
     sample_data = pixels[sample_idx]
 
-    # Run kmeans on the sample to get centroids
     centroids, _ = kmeans2(sample_data, num_clusters, minit='points')
 
-    # Assign every pixel to the nearest centroid in chunks to limit memory
+    # Assign every pixel to nearest centroid in chunks (same as original)
     labels_all = np.empty(n_pixels, dtype=np.int32)
-    chunk = 1_000_000  # ~1M pixels per chunk; tune if needed
+    chunk = 1_000_000
     for start in range(0, n_pixels, chunk):
         end = min(start + chunk, n_pixels)
         block = pixels[start:end]  # (M,3)
-        # distances to centroids (M, K)
-        # compute squared distances
-        # (a-b)^2 = a^2 + b^2 - 2ab; we do it explicitly to reduce temporaries
-        a2 = np.sum(block * block, axis=1)[:, None]  # (M,1)
-        b2 = np.sum(centroids * centroids, axis=1)[None, :]  # (1,K)
-        ab = block.dot(centroids.T)  # (M,K)
+        a2 = np.sum(block * block, axis=1)[:, None]
+        b2 = np.sum(centroids * centroids, axis=1)[None, :]
+        ab = block.dot(centroids.T)
         d2 = a2 + b2 - 2 * ab
         labels_all[start:end] = np.argmin(d2, axis=1)
 
     label_map = labels_all.reshape(height, width)
-
     output_image = image.copy()
 
-    # Pre-allocate structure for connected component labeling
     structure = np.ones((3, 3), dtype=np.int8)
 
-    # Iterate clusters
-    for cluster_id in range(num_clusters):
+    # Worker for a single cluster (runs in thread)
+    def process_cluster(cluster_id: int):
         cluster_mask = (label_map == cluster_id).astype(np.uint8)
         if cluster_mask.sum() == 0:
-            continue
+            return 0  # nothing done
 
         labeled_array, num_features = label(cluster_mask, structure=structure)
-
         if num_features == 0:
-            continue
+            return 0
 
-        # Use bincount to get sizes per feature (fast)
         counts = np.bincount(labeled_array.ravel())
-        # index 0 is background; features are 1..num_features
-        # find feature ids that meet min_region_size
         valid_ids = np.nonzero(counts >= min_region_size)[0]
-        # drop background id=0
         valid_ids = valid_ids[valid_ids != 0]
         if valid_ids.size == 0:
-            continue
+            return 0
 
-        # Compute means per channel for the selected region ids using scipy.ndimage.mean
-        # ndi_mean returns a list of means in the same order as 'index'
         idx_list = valid_ids.tolist()
         means_r = ndi_mean(img_f[..., 0], labels=labeled_array, index=idx_list)
         means_g = ndi_mean(img_f[..., 1], labels=labeled_array, index=idx_list)
         means_b = ndi_mean(img_f[..., 2], labels=labeled_array, index=idx_list)
+        region_means = np.stack([means_r, means_g, means_b], axis=-1)  # float 0..255
 
-        # Stack into (N_regions, 3)
-        region_means = np.stack([means_r, means_g, means_b], axis=-1)  # still float (0..255)
-
-        # Convert region means to HSV (vectorized)
-        region_mean_hsv = rgb_to_hsv(region_means[np.newaxis, :, :].reshape(-1, 3))  # shape (N,3)
-        # Apply deterministic small random shifts per region
-        new_colors_rgb = np.empty_like(region_means, dtype=np.uint8)
+        # convert region means to HSV and generate new colors per region
+        region_mean_hsv = rgb_to_hsv(region_means[np.newaxis, :, :].reshape(-1, 3))
+        # iterate regions (small loop per region; still OK)
         for i, region_label in enumerate(idx_list):
-            # deterministic seed per cluster+region to replicate original's deterministic randomness
             seed_val = 42 + cluster_id + int(region_label)
             rng_region = np.random.default_rng(seed_val)
-            shifts = rng_region.uniform(-0.05, 0.05, size=3)  # ±5% as before
-            # original scaled shift: shifts * [10.0, 0.1, 0.1]
+            shifts = rng_region.uniform(-0.05, 0.05, size=3)
             hsv = region_mean_hsv[i].copy()
             hsv += shifts * np.array([10.0, 0.1, 0.1])
             hsv[0] = np.clip(hsv[0], 0, 360)
             hsv[1] = np.clip(hsv[1], 0, 1)
             hsv[2] = np.clip(hsv[2], 0, 1)
             rgb_new = hsv_to_rgb(hsv[np.newaxis, :])[0]
-            new_colors_rgb[i] = rgb_new
 
-            # Assign color to region in the output image
             mask = (labeled_array == int(region_label))
+            # assign directly into shared output_image; clusters don't overlap so this is safe
             output_image[mask] = rgb_new
 
-    # Island of pixel absorbtion. To curb those ugly pixel islands.
-    # mask of pixels that were changed by the region coloring pass
+        return 1  # done something
+
+    # Run cluster processing in thread pool
+    if n_jobs is None:
+        n_jobs = os.cpu_count() or 1
+    n_jobs = max(1, int(n_jobs))
+
+    with ThreadPoolExecutor(max_workers=n_jobs) as ex:
+        futures = [ex.submit(process_cluster, cid) for cid in range(num_clusters)]
+        # optional: iterate to ensure completion
+        for _ in as_completed(futures):
+            pass
+
+    # Island absorbtion (parallelize KD-tree queries by chunking queries)
     changed_mask = np.any(output_image != image, axis=2)
-
-    # If there are any unchanged pixels and at least one changed pixel, fix islands
     if not np.all(changed_mask) and changed_mask.any():
-        changed_coords = np.column_stack(np.nonzero(changed_mask))  # (M,2) rows,cols
+        changed_coords = np.column_stack(np.nonzero(changed_mask))  # (M,2)
         changed_colors = output_image[changed_mask]  # (M,3)
-
         unchanged_coords = np.column_stack(np.nonzero(~changed_mask))  # (U,2)
 
         if changed_coords.shape[0] > 0 and unchanged_coords.shape[0] > 0:
-            # cKDTree is fast; query nearest changed pixel for each unchanged pixel
             tree = cKDTree(changed_coords)
-            _, idxs = tree.query(unchanged_coords, k=1)
-            nearest_colors = changed_colors[idxs]
 
-            # Assign nearest changed color to each originally-unchanged pixel
-            output_image[~changed_mask] = nearest_colors
+            # We'll chunk the unchanged coords and parallel query
+            def query_chunk(start_end):
+                s, e = start_end
+                sub = unchanged_coords[s:e]
+                _, idxs = tree.query(sub, k=1)
+                return (s, e, idxs)
+
+            # prepare ranges
+            U = unchanged_coords.shape[0]
+            qchunk = max(1_000, U // (n_jobs * 4) + 1)
+            ranges = [(i, min(i + qchunk, U)) for i in range(0, U, qchunk)]
+
+            nearest_colors = np.empty((U, 3), dtype=np.uint8)
+            with ThreadPoolExecutor(max_workers=n_jobs) as ex:
+                futures = [ex.submit(query_chunk, r) for r in ranges]
+                for fut in as_completed(futures):
+                    s, e, idxs = fut.result()
+                    nearest_colors[s:e] = changed_colors[idxs]
+
+            # assign back
+            # flatten indexing: map (r,c) to flat index
+            flat_idx = unchanged_coords[:, 0] * width + unchanged_coords[:, 1]
+            out_flat = output_image.reshape(-1, 3)
+            out_flat[flat_idx] = nearest_colors
 
     return output_image
-
-def main():
-    parser = argparse.ArgumentParser(description="Blend similar and connected colors in an image with random HSV shift.")
-    parser.add_argument("input", help="Path to the input image file")
-    parser.add_argument("output", help="Path to save the output image file")
-    parser.add_argument("--tolerance", type=float, default=10.0,
-                        help="Tolerance for color similarity (default: 10.0)")
-    parser.add_argument("--min-region-size", type=int, default=50,
-                        help="Minimum number of pixels in a connected region (default: 50)")
-    args = parser.parse_args()
-
-    try:
-        img = Image.open(args.input).convert("RGB")
-        img_array = np.array(img)
-        result_array = blend_colors(img_array, args.tolerance, args.min_region_size)
-        result_img = Image.fromarray(result_array)
-        result_img.save(args.output)
-        print(f"Processed image saved to {args.output}")
-    except FileNotFoundError:
-        print(f"Error: Input file '{args.input}' not found.")
-    except Exception as e:
-        print(f"Error: {str(e)}")
-
-if __name__ == "__main__":
-    main()
