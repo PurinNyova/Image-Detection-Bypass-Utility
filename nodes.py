@@ -340,6 +340,7 @@ class NovaNodes:
                 # utility flags (positive-style equivalents)
                 perturb=(True if perturb_mag_frac > 0 else False),
                 perturb_magnitude=float(perturb_mag_frac),
+                blend=False
             )
 
             # ---- Run the processing function ----
