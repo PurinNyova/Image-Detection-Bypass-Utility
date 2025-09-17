@@ -89,6 +89,10 @@ pip install -r requirements.txt
 
 ```bash
 python run.py
+
+# Alternatively, if you're having issues, a "run.sh" script has been created that will also install dependencies 
+# properly  and run the GUI
+./run.sh # also installs dependencies before running `python run.py`
 ```
 
 ---
