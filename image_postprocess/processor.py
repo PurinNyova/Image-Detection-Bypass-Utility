@@ -25,8 +25,8 @@ from .utils import (
     glcm_normalize,
     lbp_normalize,
     attack_non_semantic,
-    blend_colors
-    
+    blend_colors,
+    FOURIER_VARIANTS,
 )
 from .camera_pipeline import simulate_camera_pipeline
 
@@ -106,11 +106,16 @@ def process_image(path_in, path_out, args):
 
     # --- FFT spectral matching (if enabled) ---
     if args.fft:
-        arr = fourier_match_spectrum(arr, ref_img_arr=ref_arr_fft, mode=args.fft_mode,
-                                     alpha=args.fft_alpha, cutoff=args.cutoff,
-                                     strength=args.fstrength, randomness=args.randomness,
-                                     phase_perturb=args.phase_perturb, radial_smooth=args.radial_smooth,
-                                     seed=args.seed)
+        fft_variant = getattr(args, 'fft_variant', 'v2')
+        fft_func = FOURIER_VARIANTS.get(fft_variant, fourier_match_spectrum)
+        fft_kwargs = dict(ref_img_arr=ref_arr_fft, mode=args.fft_mode,
+                          alpha=args.fft_alpha, cutoff=args.cutoff,
+                          strength=args.fstrength, randomness=args.randomness,
+                          seed=args.seed)
+        if fft_variant != 'v3':
+            fft_kwargs['phase_perturb'] = args.phase_perturb
+        fft_kwargs['radial_smooth'] = args.radial_smooth
+        arr = fft_func(arr, **fft_kwargs)
 
     # GLCM normalization
     if args.glcm:
