@@ -275,6 +275,13 @@ class MainWindow(QMainWindow):
         self.fft_enable_chk.setChecked(getbool("ManualParameters", "fft_enable", True))
         params_layout.addRow(self.fft_enable_chk)
 
+        # FFT variant selector
+        self.fft_variant_combo = QComboBox()
+        self.fft_variant_combo.addItems(["v1 (Original)", "v2", "v3"])
+        self.fft_variant_combo.setCurrentText(get("ManualParameters", "fft_variant", "v2"))
+        self.fft_variant_combo.setToolTip("Select which Fourier pipeline variant to use")
+        params_layout.addRow("FFT Variant", self.fft_variant_combo)
+
         self.perturb_enable_chk = QCheckBox("Enable Randomized Perturbation")
         self.perturb_enable_chk.setChecked(getbool("ManualParameters", "perturb_enable", True))
         params_layout.addRow(self.perturb_enable_chk)
@@ -688,6 +695,7 @@ class MainWindow(QMainWindow):
             args.fft_mode = "auto"
             args.fft_alpha = 1.0
             args.alpha = 1.0
+            args.fft_variant = self.fft_variant_combo.currentText()
             args.glcm = False
             args.glcm_distances = [1]
             args.glcm_angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]
@@ -756,6 +764,7 @@ class MainWindow(QMainWindow):
             args.noise = self.noise_enable_chk.isChecked()
             args.clahe = self.clahe_enable_chk.isChecked()
             args.fft = self.fft_enable_chk.isChecked()
+            args.fft_variant = self.fft_variant_combo.currentText()
             args.perturb = self.perturb_enable_chk.isChecked()
             args.perturb_magnitude = float(self.perturb_spin.value())
             args.blend = bool(self.blend_chk.isChecked())
