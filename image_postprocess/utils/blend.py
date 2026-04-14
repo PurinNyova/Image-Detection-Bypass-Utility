@@ -1,96 +1,16 @@
+import cv2
 import numpy as np
 from scipy.cluster.vq import kmeans2
-from scipy.ndimage import label, mean as ndi_mean
-from scipy.spatial import cKDTree
+from scipy.ndimage import distance_transform_edt, label
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# Vectorized color conversions
-def rgb_to_hsv(rgb: np.ndarray) -> np.ndarray:
-    """
-    Vectorized RGB->[H(0..360), S(0..1), V(0..1)].
-    rgb: (..., 3) in [0,255]
-    """
-    rgb = rgb.astype(np.float32) / 255.0
-    r = rgb[..., 0]
-    g = rgb[..., 1]
-    b = rgb[..., 2]
-
-    maxc = np.maximum(np.maximum(r, g), b)
-    minc = np.minimum(np.minimum(r, g), b)
-    delta = maxc - minc
-
-    # Hue
-    h = np.zeros_like(maxc)
-    nonzero = delta > 1e-8
-
-    # r is max
-    mask = nonzero & (maxc == r)
-    h[mask] = ((g[mask] - b[mask]) / delta[mask]) % 6
-    # g is max
-    mask = nonzero & (maxc == g)
-    h[mask] = ((b[mask] - r[mask]) / delta[mask]) + 2
-    # b is max
-    mask = nonzero & (maxc == b)
-    h[mask] = ((r[mask] - g[mask]) / delta[mask]) + 4
-
-    h = h * 60.0  # degrees
-    h[~nonzero] = 0.0
-
-    # Saturation
-    s = np.zeros_like(maxc)
-    nonzero_max = maxc > 1e-8
-    s[nonzero_max] = delta[nonzero_max] / maxc[nonzero_max]
-
-    v = maxc
-    hsv = np.stack([h, s, v], axis=-1)
-    return hsv
-
-def hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
-    """
-    Vectorized HSV->[0..255] RGB.
-    hsv: (...,3) with H in [0,360], S,V in [0,1]
-    """
-    h = hsv[..., 0] / 60.0  # sector
-    s = hsv[..., 1]
-    v = hsv[..., 2]
-
-    c = v * s
-    x = c * (1 - np.abs((h % 2) - 1))
-    m = v - c
-
-    rp = np.zeros_like(h)
-    gp = np.zeros_like(h)
-    bp = np.zeros_like(h)
-
-    seg0 = (0 <= h) & (h < 1)
-    seg1 = (1 <= h) & (h < 2)
-    seg2 = (2 <= h) & (h < 3)
-    seg3 = (3 <= h) & (h < 4)
-    seg4 = (4 <= h) & (h < 5)
-    seg5 = (5 <= h) & (h < 6)
-
-    rp[seg0] = c[seg0]; gp[seg0] = x[seg0]; bp[seg0] = 0
-    rp[seg1] = x[seg1]; gp[seg1] = c[seg1]; bp[seg1] = 0
-    rp[seg2] = 0;        gp[seg2] = c[seg2]; bp[seg2] = x[seg2]
-    rp[seg3] = 0;        gp[seg3] = x[seg3]; bp[seg3] = c[seg3]
-    rp[seg4] = x[seg4]; gp[seg4] = 0;        bp[seg4] = c[seg4]
-    rp[seg5] = c[seg5]; gp[seg5] = 0;        bp[seg5] = x[seg5]
-
-    r = (rp + m)
-    g = (gp + m)
-    b = (bp + m)
-
-    rgb = np.stack([r, g, b], axis=-1)
-    rgb = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
-    return rgb
 
 # Main blending pipeline
 
 def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: int = 50,
                           max_kmeans_samples: int = 100000, n_jobs: int | None = None) -> np.ndarray:
     """
-    Parallelized version of blend_colors.
+    Blend large color regions after edge-preserving smoothing in LAB space.
     n_jobs: number of worker threads (None -> os.cpu_count()).
     """
     if not isinstance(image, np.ndarray) or image.dtype != np.uint8 or image.ndim != 3:
@@ -99,8 +19,10 @@ def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: in
     height, width, channels = image.shape
     assert channels == 3
 
-    img_f = image.astype(np.float32)
-    pixels = img_f.reshape(-1, 3)
+    smoothed_image = cv2.bilateralFilter(image, 9, 75, 75)
+    lab_image = cv2.cvtColor(smoothed_image, cv2.COLOR_RGB2LAB)
+
+    pixels = lab_image.reshape(-1, 3).astype(np.float32)
     n_pixels = pixels.shape[0]
 
     num_clusters = max(1, int(256 / tolerance))
@@ -114,6 +36,10 @@ def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: in
     sample_data = pixels[sample_idx]
 
     centroids, _ = kmeans2(sample_data, num_clusters, minit='points')
+    cluster_colors = cv2.cvtColor(
+        np.clip(centroids, 0, 255).astype(np.uint8)[np.newaxis, :, :],
+        cv2.COLOR_LAB2RGB,
+    )[0]
 
     # Assign every pixel to nearest centroid in chunks (same as original)
     labels_all = np.empty(n_pixels, dtype=np.int32)
@@ -149,28 +75,10 @@ def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: in
             return 0
 
         idx_list = valid_ids.tolist()
-        means_r = ndi_mean(img_f[..., 0], labels=labeled_array, index=idx_list)
-        means_g = ndi_mean(img_f[..., 1], labels=labeled_array, index=idx_list)
-        means_b = ndi_mean(img_f[..., 2], labels=labeled_array, index=idx_list)
-        region_means = np.stack([means_r, means_g, means_b], axis=-1)  # float 0..255
-
-        # convert region means to HSV and generate new colors per region
-        region_mean_hsv = rgb_to_hsv(region_means[np.newaxis, :, :].reshape(-1, 3))
-        # iterate regions (small loop per region; still OK)
-        for i, region_label in enumerate(idx_list):
-            seed_val = 42 + cluster_id + int(region_label)
-            rng_region = np.random.default_rng(seed_val)
-            shifts = rng_region.uniform(-0.05, 0.05, size=3)
-            hsv = region_mean_hsv[i].copy()
-            hsv += shifts * np.array([10.0, 0.1, 0.1])
-            hsv[0] = np.clip(hsv[0], 0, 360)
-            hsv[1] = np.clip(hsv[1], 0, 1)
-            hsv[2] = np.clip(hsv[2], 0, 1)
-            rgb_new = hsv_to_rgb(hsv[np.newaxis, :])[0]
-
+        cluster_color = cluster_colors[cluster_id]
+        for region_label in idx_list:
             mask = (labeled_array == int(region_label))
-            # assign directly into shared output_image; clusters don't overlap so this is safe
-            output_image[mask] = rgb_new
+            output_image[mask] = cluster_color
 
         return 1  # done something
 
@@ -185,39 +93,12 @@ def blend_colors(image: np.ndarray, tolerance: float = 10.0, min_region_size: in
         for _ in as_completed(futures):
             pass
 
-    # Island absorbtion (parallelize KD-tree queries by chunking queries)
+    # Fill untouched islands from their nearest blended pixel.
     changed_mask = np.any(output_image != image, axis=2)
     if not np.all(changed_mask) and changed_mask.any():
-        changed_coords = np.column_stack(np.nonzero(changed_mask))  # (M,2)
-        changed_colors = output_image[changed_mask]  # (M,3)
-        unchanged_coords = np.column_stack(np.nonzero(~changed_mask))  # (U,2)
-
-        if changed_coords.shape[0] > 0 and unchanged_coords.shape[0] > 0:
-            tree = cKDTree(changed_coords)
-
-            # We'll chunk the unchanged coords and parallel query
-            def query_chunk(start_end):
-                s, e = start_end
-                sub = unchanged_coords[s:e]
-                _, idxs = tree.query(sub, k=1)
-                return (s, e, idxs)
-
-            # prepare ranges
-            U = unchanged_coords.shape[0]
-            qchunk = max(1_000, U // (n_jobs * 4) + 1)
-            ranges = [(i, min(i + qchunk, U)) for i in range(0, U, qchunk)]
-
-            nearest_colors = np.empty((U, 3), dtype=np.uint8)
-            with ThreadPoolExecutor(max_workers=n_jobs) as ex:
-                futures = [ex.submit(query_chunk, r) for r in ranges]
-                for fut in as_completed(futures):
-                    s, e, idxs = fut.result()
-                    nearest_colors[s:e] = changed_colors[idxs]
-
-            # assign back
-            # flatten indexing: map (r,c) to flat index
-            flat_idx = unchanged_coords[:, 0] * width + unchanged_coords[:, 1]
-            out_flat = output_image.reshape(-1, 3)
-            out_flat[flat_idx] = nearest_colors
+        _, indices = distance_transform_edt(~changed_mask, return_indices=True)
+        nearest_y = indices[0][~changed_mask]
+        nearest_x = indices[1][~changed_mask]
+        output_image[~changed_mask] = output_image[nearest_y, nearest_x]
 
     return output_image
