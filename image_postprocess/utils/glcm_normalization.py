@@ -1,7 +1,6 @@
 import numpy as np
+import cv2
 from skimage.feature import graycomatrix, graycoprops
-from scipy.ndimage import gaussian_filter
-from PIL import Image
 
 def glcm_normalize(img_arr: np.ndarray,
                    ref_img_arr: np.ndarray = None,
@@ -13,38 +12,31 @@ def glcm_normalize(img_arr: np.ndarray,
                    max_levels_for_speed: int = None,
                    eps: float = 1e-8):
     """
-    Optimized GLCM normalization.
+    GLCM normalization on localized luminance only.
 
-    Key optimizations:
-    - quantize grayscale to fewer levels if max_levels_for_speed is provided (speeds up graycomatrix drastically)
-    - compute glcm / properties once (not per channel)
-    - use gaussian_filter (single multi-dimensional filter) instead of two gaussian_filter1d calls
-    - generate noise once for all channels
+    The RGB image is converted to LAB, only the L channel is transformed, and the
+    original A/B channels are preserved to avoid chromatic artifacts.
     """
-    if seed is not None:
-        rng = np.random.default_rng(seed)
-    else:
-        rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
-    img = np.asarray(img_arr)
+    img = np.asarray(img_arr, dtype=np.uint8)
     h, w = img.shape[:2]
-    channels = img.shape[2] if img.ndim == 3 else 1
 
-    # Grayscale and quantization
-    img_gray_f = np.mean(img.astype(np.float32), axis=2) if img.ndim == 3 else img.astype(np.float32)
-    img_gray = (img_gray_f / 255.0 * (levels - 1)).astype(np.int32)
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    l_channel_f = l_channel.astype(np.float32)
 
-    # Optionally reduce levels for speed (safe; only if caller requests)
+    # Quantize luminance for GLCM computation.
+    l_quantized = (l_channel_f / 255.0 * (levels - 1)).astype(np.int32)
+
     use_levels = levels
     if max_levels_for_speed is not None and max_levels_for_speed < levels:
         use_levels = max_levels_for_speed
-        # quantize into `use_levels` bins
-        img_gray = np.floor(img_gray_f / 255.0 * (use_levels - 1)).astype(np.uint8)
+        l_quantized = np.floor(l_channel_f / 255.0 * (use_levels - 1)).astype(np.uint8)
     else:
-        img_gray = img_gray.astype(np.uint8)
+        l_quantized = l_quantized.astype(np.uint8)
 
-    # Compute GLCM and properties (image-level)
-    glcm = graycomatrix(img_gray, distances=distances, angles=angles,
+    glcm = graycomatrix(l_quantized, distances=distances, angles=angles,
                         levels=use_levels, symmetric=True, normed=True)
     contrast = graycoprops(glcm, 'contrast').mean()
     homogeneity = graycoprops(glcm, 'homogeneity').mean()
@@ -52,64 +44,46 @@ def glcm_normalize(img_arr: np.ndarray,
     ref_contrast = None
     ref_homogeneity = None
     if ref_img_arr is not None:
-        ref = np.asarray(ref_img_arr)
-        # Resize reference only once if needed
+        ref = np.asarray(ref_img_arr, dtype=np.uint8)
         if ref.shape[0] != h or ref.shape[1] != w:
-            ref_img = Image.fromarray(ref).resize((w, h), resample=Image.BICUBIC)
-            ref = np.array(ref_img)
-        ref_gray_f = np.mean(ref.astype(np.float32), axis=2) if ref.ndim == 3 else ref.astype(np.float32)
+            ref = cv2.resize(ref, (w, h), interpolation=cv2.INTER_CUBIC)
+
+        ref_lab = cv2.cvtColor(ref, cv2.COLOR_RGB2LAB)
+        ref_l = ref_lab[:, :, 0].astype(np.float32)
         if max_levels_for_speed is not None and max_levels_for_speed < levels:
-            ref_gray = np.floor(ref_gray_f / 255.0 * (use_levels - 1)).astype(np.uint8)
+            ref_quantized = np.floor(ref_l / 255.0 * (use_levels - 1)).astype(np.uint8)
         else:
-            ref_gray = (ref_gray_f / 255.0 * (use_levels - 1)).astype(np.uint8)
-        ref_glcm = graycomatrix(ref_gray, distances=distances, angles=angles,
+            ref_quantized = (ref_l / 255.0 * (use_levels - 1)).astype(np.uint8)
+
+        ref_glcm = graycomatrix(ref_quantized, distances=distances, angles=angles,
                                 levels=use_levels, symmetric=True, normed=True)
         ref_contrast = graycoprops(ref_glcm, 'contrast').mean()
         ref_homogeneity = graycoprops(ref_glcm, 'homogeneity').mean()
 
-    out = np.empty_like(img, dtype=np.float32)
-
-    # Pre-generate noise if needed for all channels
     if strength > 0.0:
-        noise_all = rng.normal(loc=0.0, scale=0.02 * strength, size=(h, w, channels)).astype(np.float32) * 255.0
+        noise_l = rng.normal(loc=0.0, scale=0.02 * strength, size=(h, w)).astype(np.float32) * 255.0
+        noise_l = cv2.GaussianBlur(noise_l, (3, 3), sigmaX=0.5, sigmaY=0.5)
     else:
-        noise_all = np.zeros((h, w, channels), dtype=np.float32)
+        noise_l = np.zeros((h, w), dtype=np.float32)
 
-    # If reference features exist, precompute global transforms
     if (ref_contrast is not None) and (ref_homogeneity is not None):
         contrast_ratio = ref_contrast / (contrast + eps)
         homogeneity_ratio = ref_homogeneity / (homogeneity + eps)
-        # contrast adjustment uses sqrt scaling
         contrast_scale = np.sqrt(contrast_ratio).astype(np.float32)
-        # homogeneity: sigma for smoothing - keep within reasonable bounds
-        sigma = float(np.clip(1.0 / (homogeneity_ratio + eps), 0.5, 5.0))
+        bilateral_sigma = float(np.clip(75.0 / (homogeneity_ratio + eps), 25.0, 150.0))
     else:
         contrast_scale = None
-        sigma = None
+        bilateral_sigma = None
 
-    # Apply per-channel transforms (vectorized where possible)
-    if channels == 1:
-        channel = img.astype(np.float32)
-        if contrast_scale is not None:
-            adjusted = channel * contrast_scale
-            # single multi-dimensional gaussian instead of two 1D passes
-            adjusted = gaussian_filter(adjusted, sigma=(sigma, sigma))
-            blended = (1.0 - strength) * channel + strength * adjusted
-        else:
-            blended = channel
-        blended += noise_all[:, :, 0]
-        out[:, :] = blended
+    if contrast_scale is not None:
+        adjusted_l = l_channel_f * contrast_scale
+        adjusted_l = cv2.bilateralFilter(adjusted_l, d=9, sigmaColor=bilateral_sigma, sigmaSpace=bilateral_sigma)
+        blended_l = (1.0 - strength) * l_channel_f + strength * adjusted_l
     else:
-        for c in range(channels):
-            channel = img[:, :, c].astype(np.float32)
-            if contrast_scale is not None:
-                adjusted = channel * contrast_scale
-                adjusted = gaussian_filter(adjusted, sigma=(sigma, sigma))
-                blended = (1.0 - strength) * channel + strength * adjusted
-            else:
-                blended = channel
-            blended += noise_all[:, :, c]
-            out[:, :, c] = blended
+        blended_l = l_channel_f.copy()
 
-    out = np.clip(out, 0, 255).astype(np.uint8)
-    return out
+    blended_l += noise_l
+    out_l = np.clip(blended_l, 0, 255).astype(np.uint8)
+
+    out_lab = cv2.merge((out_l, a_channel, b_channel))
+    return cv2.cvtColor(out_lab, cv2.COLOR_LAB2RGB)
