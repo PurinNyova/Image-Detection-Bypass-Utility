@@ -238,6 +238,6 @@ Andre Kassis, Urs Hengartner
 
 ## License
 
-MIT — free to use and adapt. Please include attribution if you fork or republish.
+AGPL V3
 
 ---
