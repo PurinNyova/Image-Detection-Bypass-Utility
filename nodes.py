@@ -15,7 +15,7 @@ except Exception as e:
 else:
     IMPORT_ERROR = None
 
-from .nodes_utils import CameraOptionsNode, NSOptionsNode
+from .nodes_utils import CameraOptionsNode, FFTOptionsNode, GLCMOptionsNode, NSOptionsNode
 
 lut_extensions = ['png','npy','cube']
 
@@ -74,8 +74,10 @@ def _parse_float_list(val):
 class NovaNodes:
     """
     ComfyUI node: Full post-processing chain using process_image from image_postprocess.
-    This version expects two optional JSON inputs:
+        This version expects four helper-node JSON inputs:
       - Cam_Opt: JSON string produced by CameraOptionsNode
+            - FFT_Opt: JSON string produced by FFTOptionsNode
+            - GLCM_Opt: JSON string produced by GLCMOptionsNode
       - NS_Opt: JSON string produced by NSOptionsNode
 
     If those are empty, default values will be used (matching prior defaults).
@@ -90,22 +92,13 @@ class NovaNodes:
 
                 # High-level toggles for using the external nodes
                 "Cam_Opt": ("CAMERAOPT", ),
+                "FFT_Opt": ("FFTOPT", ),
+                "GLCM_Opt": ("GLCMOPT", ),
                 "NS_Opt": ("NONSEMANTICOP", ),
 
-                # Parameters (noise / clahe / fourier / etc.)
+                # Parameters still owned by the main node
                 "apply_noise_o": ("BOOLEAN", {"default": True}),
                 "noise_std_frac": ("FLOAT", {"default": 0.02, "min": 0.0, "max": 0.1, "step": 0.001}),
-                "apply_clahe_o": ("BOOLEAN", {"default": True}),
-                "clahe_clip": ("FLOAT", {"default": 2.00, "min": 0.5, "max": 10.0, "step": 0.1}),
-                "clahe_grid": ("INT", {"default": 8, "min": 2, "max": 32, "step": 1}),
-                "fourier_cutoff": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "apply_fourier_o": ("BOOLEAN", {"default": True}),
-                "fourier_strength": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "fourier_randomness": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 0.5, "step": 0.01}),
-                "fourier_phase_perturb": ("FLOAT", {"default": 0.08, "min": 0.0, "max": 0.5, "step": 0.01}),
-                "fourier_radial_smooth": ("INT", {"default": 5, "min": 0, "max": 50, "step": 1}),
-                "fourier_mode": (["auto", "ref", "model"], {"default": "auto"}),
-                "fourier_alpha": ("FLOAT", {"default": 1.00, "min": 0.1, "max": 4.0, "step": 0.1}),
                 "perturb_mag_frac": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 0.05, "step": 0.001}),
                 "enable_awb": ("BOOLEAN", {"default": True}),
 
@@ -113,16 +106,6 @@ class NovaNodes:
                 "enable_lut": ("BOOLEAN", {"default": True}),
                 "lut": ("STRING", {"default": "X://insert/path/here(.png/.npy/.cube)", "vhs_path_extensions": lut_extensions}),
                 "lut_strength": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "glcm": ("BOOLEAN", {"default": False}),
-                "glcm_distances": ("STRING", {"default": "1"}),
-                "glcm_angles": ("STRING", {"default": f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}"}),
-                "glcm_levels": ("INT", {"default": 256, "min": 2, "max": 65536, "step": 1}),
-                "glcm_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "lbp": ("BOOLEAN", {"default": False}),
-                "lbp_radius": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
-                "lbp_n_points": ("INT", {"default": 24, "min": 1, "max": 512, "step": 1}),
-                "lbp_method": (["default", "ror", "uniform", "var"], {"default": "uniform"}),
-                "lbp_strength": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
 
                 # seed, exif
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**31-1, "step": 1}),
@@ -159,6 +142,25 @@ class NovaNodes:
         "motion_blur_ksize": 1,
     }
 
+    FFT_DEFAULTS = {
+        "apply_fourier_o": False,
+        "fourier_cutoff": 0.25,
+        "fourier_strength": 0.9,
+        "fourier_randomness": 0.05,
+        "fourier_phase_perturb": 0.08,
+        "fourier_radial_smooth": 5,
+        "fourier_mode": "auto",
+        "fourier_alpha": 1.0,
+    }
+
+    GLCM_DEFAULTS = {
+        "glcm": False,
+        "glcm_distances": "1",
+        "glcm_angles": f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}",
+        "glcm_levels": 256,
+        "glcm_strength": 0.9,
+    }
+
     NS_DEFAULTS = {
         "non_semantic": False,
         "ns_iterations": 500,
@@ -173,34 +175,15 @@ class NovaNodes:
     def process(self, image,
                 apply_noise_o=True,
                 noise_std_frac=0.02,
-                apply_clahe_o=True,
-                clahe_clip=2.0,
-                clahe_grid=8,
-                fourier_cutoff=0.25,
-                apply_fourier_o=True,
-                fourier_strength=0.9,
-                fourier_randomness=0.05,
-                fourier_phase_perturb=0.08,
-                fourier_radial_smooth=5,
-                fourier_mode="auto",
-                fourier_alpha=1.0,
                 perturb_mag_frac=0.01,
                 enable_awb=True,
                 Cam_Opt="",
+                FFT_Opt="",
+                GLCM_Opt="",
                 NS_Opt="",
                 enable_lut=True,
                 lut="",
                 lut_strength=1.0,
-                glcm=False,
-                glcm_distances="1",
-                glcm_angles=f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}",
-                glcm_levels=256,
-                glcm_strength=0.9,
-                lbp=False,
-                lbp_radius=3,
-                lbp_n_points=24,
-                lbp_method="uniform",
-                lbp_strength=0.9,
                 seed=-1,
                 apply_exif_o=True,
                 awb_ref_image=None,
@@ -217,6 +200,24 @@ class NovaNodes:
                 loaded = json.loads(Cam_Opt)
                 if isinstance(loaded, dict):
                     cam_opts.update(loaded)
+            except Exception:
+                pass
+
+        fft_opts = dict(self.FFT_DEFAULTS)
+        if isinstance(FFT_Opt, str) and FFT_Opt.strip() != "":
+            try:
+                loaded = json.loads(FFT_Opt)
+                if isinstance(loaded, dict):
+                    fft_opts.update(loaded)
+            except Exception:
+                pass
+
+        glcm_opts = dict(self.GLCM_DEFAULTS)
+        if isinstance(GLCM_Opt, str) and GLCM_Opt.strip() != "":
+            try:
+                loaded = json.loads(GLCM_Opt)
+                if isinstance(loaded, dict):
+                    glcm_opts.update(loaded)
             except Exception:
                 pass
 
@@ -263,8 +264,10 @@ class NovaNodes:
                 tmp_files.append(output_path)
 
             # Parse list-like UI inputs into native lists
-            parsed_glcm_distances = _parse_int_list(glcm_distances)
-            parsed_glcm_angles = _parse_float_list(glcm_angles)
+            parsed_glcm_distances = _parse_int_list(glcm_opts.get("glcm_distances", "1"))
+            parsed_glcm_angles = _parse_float_list(
+                glcm_opts.get("glcm_angles", f"0,{np.pi/4},{np.pi/2},{3*np.pi/4}")
+            )
 
             # Prepare args for process_image with updated keys (matches build_argparser())
             args = SimpleNamespace(
@@ -277,37 +280,37 @@ class NovaNodes:
                 ref=awb_ref_path,
                 fft_ref=fft_ref_path,
 
-                # basic corrections / noise / CLAHE
+                # basic corrections / noise
                 noise_std=float(noise_std_frac),
                 noise=bool(apply_noise_o),
-                clahe=bool(apply_clahe_o),
-                clahe_clip=float(clahe_clip),
-                tile=int(clahe_grid),
+                clahe=False,
+                clahe_clip=2.0,
+                tile=8,
 
                 # Fourier / FFT matching
-                fft=bool(apply_fourier_o),
-                fstrength=float(fourier_strength) if apply_fourier_o else 0.0,
-                randomness=float(fourier_randomness),
+                fft=bool(fft_opts.get("apply_fourier_o", True)),
+                fstrength=float(fft_opts.get("fourier_strength", 0.9)) if bool(fft_opts.get("apply_fourier_o", True)) else 0.0,
+                randomness=float(fft_opts.get("fourier_randomness", 0.05)),
                 seed=(None if int(seed) < 0 else int(seed)),
-                fft_mode=str(fourier_mode),
-                fft_alpha=float(fourier_alpha),
-                phase_perturb=float(fourier_phase_perturb),
-                radial_smooth=int(fourier_radial_smooth),
-                cutoff=float(fourier_cutoff),
+                fft_mode=str(fft_opts.get("fourier_mode", "auto")),
+                fft_alpha=float(fft_opts.get("fourier_alpha", 1.0)),
+                phase_perturb=float(fft_opts.get("fourier_phase_perturb", 0.08)),
+                radial_smooth=int(fft_opts.get("fourier_radial_smooth", 5)),
+                cutoff=float(fft_opts.get("fourier_cutoff", 0.25)),
 
                 # GLCM
-                glcm=bool(glcm),
+                glcm=bool(glcm_opts.get("glcm", False)),
                 glcm_distances=parsed_glcm_distances,
                 glcm_angles=parsed_glcm_angles,
-                glcm_levels=int(glcm_levels),
-                glcm_strength=float(glcm_strength),
+                glcm_levels=int(glcm_opts.get("glcm_levels", 256)),
+                glcm_strength=float(glcm_opts.get("glcm_strength", 0.9)),
 
-                # LBP
-                lbp=bool(lbp),
-                lbp_radius=int(lbp_radius),
-                lbp_n_points=int(lbp_n_points),
-                lbp_method=str(lbp_method),
-                lbp_strength=float(lbp_strength),
+                # LBP disabled at the node layer
+                lbp=False,
+                lbp_radius=3,
+                lbp_n_points=24,
+                lbp_method="uniform",
+                lbp_strength=0.9,
 
                 # Non-semantic attack (from ns_opts)
                 non_semantic=bool(ns_opts.get("non_semantic", False)),
@@ -356,22 +359,22 @@ class NovaNodes:
                 try:
                     output_img_with_exif, new_exif = self._add_fake_exif(output_img)
                     output_img = output_img_with_exif
-                    img_out = np.array(output_img.convert("RGB"))
-                except Exception:
-                    new_exif = ""
+                fft=bool(fft_opts.get("apply_fourier_o", True)),
+                fstrength=float(fft_opts.get("fourier_strength", 0.9)) if bool(fft_opts.get("apply_fourier_o", True)) else 0.0,
+                randomness=float(fft_opts.get("fourier_randomness", 0.05)),
 
-            # ---- Convert to FOOLAI-style tensor: (1, H, W, C), float32 in [0,1] ----
-            img_float = img_out.astype(np.float32) / 255.0
-            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)
-            tensor_out = torch.clamp(tensor_out, 0.0, 1.0)
-
+                fft_mode=str(fft_opts.get("fourier_mode", "auto")),
+                fft_alpha=float(fft_opts.get("fourier_alpha", 1.0)),
+                phase_perturb=float(fft_opts.get("fourier_phase_perturb", 0.08)),
+                radial_smooth=int(fft_opts.get("fourier_radial_smooth", 5)),
+                cutoff=float(fft_opts.get("fourier_cutoff", 0.25)),
             return (tensor_out, new_exif)
 
-        finally:
+                glcm=bool(glcm_opts.get("glcm", False)),
             for p in tmp_files:
                 try:
-                    os.unlink(p)
-                except Exception:
+                glcm_levels=int(glcm_opts.get("glcm_levels", 256)),
+                glcm_strength=float(glcm_opts.get("glcm_strength", 0.9)),
                     pass
 
     def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:
@@ -411,10 +414,14 @@ class NovaNodes:
 NODE_CLASS_MAPPINGS = {
     "NovaNodes": NovaNodes,
     "CameraOptionsNode": CameraOptionsNode,
+    "FFTOptionsNode": FFTOptionsNode,
+    "GLCMOptionsNode": GLCMOptionsNode,
     "NSOptionsNode": NSOptionsNode,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NovaNodes": "Image Postprocess (NOVA NODES)",
     "CameraOptionsNode": "Camera Options (NOVA)",
+    "FFTOptionsNode": "FFT Options (NOVA)",
+    "GLCMOptionsNode": "GLCM Options (NOVA)",
     "NSOptionsNode": "Non-semantic Options (NOVA)",
 }
