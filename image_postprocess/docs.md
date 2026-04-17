@@ -26,16 +26,14 @@ When multiple effects are enabled, the pipeline applies them in this order:
 2. Load FFT reference image if `--fft-ref` is provided
 3. Blend colors with k-means-based region reduction if `--blend` is enabled
 4. Apply non-semantic attack if `--non-semantic` is enabled
-5. Apply CLAHE if `--clahe` is enabled
-6. Apply FFT spectral matching if `--fft` is enabled
-7. Apply GLCM normalization if `--glcm` is enabled
-8. Apply LBP normalization if `--lbp` is enabled
-9. Add Gaussian noise if `--noise` is enabled
-10. Apply randomized perturbation if `--perturb` is enabled
-11. Run the camera simulator if `--sim-camera` is enabled
-12. Apply auto white balance if `--awb` is enabled
-13. Apply LUT mapping if `--lut` is provided
-14. Save the output with generated fake EXIF data
+5. Apply FFT spectral matching if `--fft` is enabled
+6. Apply GLCM normalization if `--glcm` is enabled
+7. Add Gaussian noise if `--noise` is enabled
+8. Apply randomized perturbation if `--perturb` is enabled
+9. Run the camera simulator if `--sim-camera` is enabled
+10. Apply auto white balance if `--awb` is enabled
+11. Apply LUT mapping if `--lut` is provided
+12. Save the output with generated fake EXIF data
 
 ## Basic Usage
 
@@ -49,7 +47,7 @@ Example with several effects enabled:
 
 ```bash
 python -m image_postprocess.processor input.jpg output.jpg \
-  --clahe --noise --fft --fft-ref reference.jpg \
+  --noise --fft --fft-ref reference.jpg \
   --sim-camera --awb --lut look.cube
 ```
 
@@ -66,15 +64,6 @@ Options:
 
 * `--ref PATH` - optional AWB reference image
 
-### CLAHE
-
-Enable with `--clahe`.
-
-Controls:
-
-* `--clahe-clip FLOAT` - CLAHE clip limit, default `2.0`
-* `--tile INT` - CLAHE tile grid size, default `8`
-
 ### FFT Spectral Matching
 
 Enable with `--fft`.
@@ -90,7 +79,7 @@ FFT can work in reference mode or model mode:
 * `--phase-perturb FLOAT` - phase noise strength in radians, default `0.08`
 * `--radial-smooth INT` - radial smoothing bins, default `5`
 
-`--fft-ref` is also reused by the GLCM and LBP normalization stages.
+`--fft-ref` is also reused by the GLCM stage.
 
 ### GLCM Normalization
 
@@ -104,19 +93,6 @@ Options:
 * `--glcm-angles FLOAT [FLOAT ...]` - angles in radians, default `0`, `pi/4`, `pi/2`, `3*pi/4`
 * `--glcm-levels INT` - gray levels, default `256`
 * `--glcm-strength FLOAT` - blend strength, default `0.9`
-
-### LBP Normalization
-
-Enable with `--lbp`.
-
-This stage matches local binary pattern histograms against the FFT reference image when available.
-
-Options:
-
-* `--lbp-radius INT` - LBP radius, default `3`
-* `--lbp-n-points INT` - neighbor count, default `24`
-* `--lbp-method {default,ror,uniform,var}` - LBP method, default `uniform`
-* `--lbp-strength FLOAT` - blend strength, default `0.9`
 
 ### Gaussian Noise
 
