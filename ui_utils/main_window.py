@@ -73,7 +73,7 @@ class MainWindow(QMainWindow):
         self.ref_btn.clicked.connect(self.choose_ref)
 
         self.fft_ref_line = QLineEdit()
-        self.fft_ref_btn = QPushButton("Choose Reference (FFT, GLCM, LBP) (Optional)")
+        self.fft_ref_btn = QPushButton("Choose Reference (FFT, GLCM) (Optional)")
         self.fft_ref_btn.clicked.connect(self.choose_fft_ref)
 
         self.output_line = QLineEdit()
@@ -267,10 +267,6 @@ class MainWindow(QMainWindow):
         self.noise_enable_chk.setChecked(getbool("ManualParameters", "noise_enable", True))
         params_layout.addRow(self.noise_enable_chk)
 
-        self.clahe_enable_chk = QCheckBox("Enable CLAHE Color Correction")
-        self.clahe_enable_chk.setChecked(getbool("ManualParameters", "clahe_enable", True))
-        params_layout.addRow(self.clahe_enable_chk)
-
         self.fft_enable_chk = QCheckBox("Enable FFT Spectral Matching")
         self.fft_enable_chk.setChecked(getbool("ManualParameters", "fft_enable", True))
         params_layout.addRow(self.fft_enable_chk)
@@ -293,19 +289,6 @@ class MainWindow(QMainWindow):
         self.noise_spin.setValue(get("ManualParameters", "noise_std", 0.02, float))
         self.noise_spin.setToolTip("Gaussian noise std fraction of 255")
         params_layout.addRow("Noise std (0-0.1)", self.noise_spin)
-
-        # CLAHE-clip
-        self.clahe_spin = QDoubleSpinBox()
-        self.clahe_spin.setRange(0.1, 10.0)
-        self.clahe_spin.setSingleStep(0.1)
-        self.clahe_spin.setValue(get("ManualParameters", "clahe_clip", 2.0, float))
-        params_layout.addRow("CLAHE clip", self.clahe_spin)
-
-        # Tile
-        self.tile_spin = QSpinBox()
-        self.tile_spin.setRange(1, 64)
-        self.tile_spin.setValue(get("ManualParameters", "tile", 8, int))
-        params_layout.addRow("CLAHE tile", self.tile_spin)
 
         # Cutoff
         self.cutoff_spin = QDoubleSpinBox()
@@ -454,41 +437,6 @@ class MainWindow(QMainWindow):
         self.glcm_strength_spin.setValue(get("TextureNormalization", "glcm_strength", 0.9, float))
         self.glcm_strength_spin.setToolTip("Strength of GLCM feature matching (0.0 = no effect, 1.0 = full effect)")
         texture_layout.addRow("GLCM Strength", self.glcm_strength_spin)
-
-        # LBP checkbox
-        self.lbp_chk = QCheckBox("Enable LBP Normalization")
-        self.lbp_chk.setChecked(getbool("TextureNormalization", "lbp_enabled", False))
-        self.lbp_chk.setToolTip("Enable LBP normalization using FFT reference image")
-        texture_layout.addRow(self.lbp_chk)
-
-        # LBP radius
-        self.lbp_radius_spin = QSpinBox()
-        self.lbp_radius_spin.setRange(1, 10)
-        self.lbp_radius_spin.setValue(get("TextureNormalization", "lbp_radius", 3, int))
-        self.lbp_radius_spin.setToolTip("Radius of LBP operator")
-        texture_layout.addRow("LBP Radius", self.lbp_radius_spin)
-
-        # LBP n_points
-        self.lbp_n_points_spin = QSpinBox()
-        self.lbp_n_points_spin.setRange(8, 64)
-        self.lbp_n_points_spin.setValue(get("TextureNormalization", "lbp_n_points", 24, int))
-        self.lbp_n_points_spin.setToolTip("Number of circularly symmetric neighbor set points for LBP")
-        texture_layout.addRow("LBP N Points", self.lbp_n_points_spin)
-
-        # LBP method
-        self.lbp_method_combo = QComboBox()
-        self.lbp_method_combo.addItems(["default", "ror", "uniform", "var"])
-        self.lbp_method_combo.setCurrentText(get("TextureNormalization", "lbp_method", "uniform"))
-        self.lbp_method_combo.setToolTip("LBP method: default, ror, uniform, or var")
-        texture_layout.addRow("LBP Method", self.lbp_method_combo)
-
-        # LBP strength
-        self.lbp_strength_spin = QDoubleSpinBox()
-        self.lbp_strength_spin.setRange(0.0, 1.0)
-        self.lbp_strength_spin.setSingleStep(0.01)
-        self.lbp_strength_spin.setValue(get("TextureNormalization", "lbp_strength", 0.9, float))
-        self.lbp_strength_spin.setToolTip("Strength of LBP histogram matching (0.0 = no effect, 1.0 = full effect)")
-        texture_layout.addRow("LBP Strength", self.lbp_strength_spin)
 
         # Camera simulator collapsible group
         self.camera_box = CollapsibleBox("Camera simulator options")
@@ -672,11 +620,12 @@ class MainWindow(QMainWindow):
         awb_ref_val = self.ref_line.text() or None
         fft_ref_val = self.fft_ref_line.text() or None
         args = SimpleNamespace()
+        args.clahe = False
+        args.lbp = False
 
         if self.auto_mode_chk.isChecked():
             strength = self.strength_slider.value() / 100.0
             args.noise_std = strength * 0.04
-            args.clahe_clip = 1.0 + strength * 3.0
             args.cutoff = max(0.01, 0.4 - strength * 0.3)
             args.fstrength = strength * 0.95
             args.phase_perturb = strength * 0.1
@@ -689,7 +638,6 @@ class MainWindow(QMainWindow):
             args.chroma_strength = strength * 2.0
             args.motion_blur_kernel = 1 + 2 * int(strength * 6)
             args.banding_strength = strength * 0.1
-            args.tile = 8
             args.randomness = 0.05
             args.radial_smooth = 5
             args.fft_mode = "auto"
@@ -701,11 +649,6 @@ class MainWindow(QMainWindow):
             args.glcm_angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]
             args.glcm_levels = 256
             args.glcm_strength = 0.9
-            args.lbp = False
-            args.lbp_radius = 3
-            args.lbp_n_points = 24
-            args.lbp_method = "uniform"
-            args.lbp_strength = 0.9
             seed_val = int(self.seed_spin.value())
             args.seed = None if seed_val == 0 else seed_val
             args.sim_camera = True
@@ -713,7 +656,6 @@ class MainWindow(QMainWindow):
             args.iso_scale = 1.0
             args.read_noise = 2.0
             args.hot_pixel_prob = 1e-6
-            args.clahe = True
             args.noise = True
             args.fft = True
             args.blend = True
@@ -727,8 +669,6 @@ class MainWindow(QMainWindow):
             sim_camera = bool(self.sim_camera_chk.isChecked())
             enable_bayer = bool(self.bayer_chk.isChecked())
             args.noise_std = float(self.noise_spin.value())
-            args.clahe_clip = float(self.clahe_spin.value())
-            args.tile = int(self.tile_spin.value())
             args.cutoff = float(self.cutoff_spin.value())
             args.fstrength = float(self.fstrength_spin.value())
             args.strength = float(self.fstrength_spin.value())
@@ -755,14 +695,7 @@ class MainWindow(QMainWindow):
             args.glcm_angles = [float(x) for x in self.glcm_angles_line.text().split()]
             args.glcm_levels = int(self.glcm_levels_spin.value())
             args.glcm_strength = float(self.glcm_strength_spin.value())
-            args.lbp = bool(self.lbp_chk.isChecked())
-            args.lbp_radius = int(self.lbp_radius_spin.value())
-            args.lbp_n_points = int(self.lbp_n_points_spin.value())
-            args.lbp_method = self.lbp_method_combo.currentText()
-            args.lbp_strength = float(self.lbp_strength_spin.value())
-            # Set the new optional processing flags based on checkboxes
             args.noise = self.noise_enable_chk.isChecked()
-            args.clahe = self.clahe_enable_chk.isChecked()
             args.fft = self.fft_enable_chk.isChecked()
             args.fft_variant = self.fft_variant_combo.currentText()
             args.perturb = self.perturb_enable_chk.isChecked()
