@@ -3,7 +3,7 @@ from .clahe import clahe_color_correction
 from .color_lut import load_lut, apply_lut
 from .exif import remove_exif_pil
 from .fourier_pipeline import fourier_match_spectrum as fourier_match_spectrum_v1
-from .fourier_pipeline_new_algo import fourier_match_spectrum as fourier_match_spectrum_v2
+from .fourier_pipeline_v2 import fourier_match_spectrum as fourier_match_spectrum_v2
 from .fourier_pipeline_v3 import fourier_match_spectrum_v3
 from .gaussian_noise import add_gaussian_noise
 from .perturbation import randomized_perturbation

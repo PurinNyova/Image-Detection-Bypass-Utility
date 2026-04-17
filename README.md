@@ -28,7 +28,7 @@ Due to the nature of this project, future updates will be under AGPL V3 license 
 
 * Select input, optional auto white-balance reference, optional FFT reference, and output paths with live previews.
 * **Auto Mode**: one slider to control an expressive preset of postprocess parameters.
-* **Manual Mode**: full access to noise, CLAHE, FFT, phase perturbation, pixel perturbation, etc.
+* **Manual Mode**: full access to noise, FFT, phase perturbation, pixel perturbation, etc.
 * Camera pipeline simulator: Bayer/demosaic, JPEG cycles/quality, vignette, chromatic aberration, motion blur, hot pixels, read-noise, banding.
 * Input / output analysis panels (via `AnalysisPanel`) to inspect images before/after processing.
 * Background worker thread with progress reporting and rich error dialog (traceback viewer).
@@ -101,7 +101,7 @@ python run.py
 
 1. **Choose Input** — opens file dialog; sets suggested output path automatically.
 2. *(optional)* **Choose Reference** — used for FFT/color reference (OpenCV-based color match supported).
-3. *(optional)* **Choose Auto White-Balance Reference** — used for auto white-balance correction (applied before CLAHE).
+3. *(optional)* **Choose Auto White-Balance Reference** — used for auto white-balance correction.
 4. **Choose Output** — where processed image will be written.
 5. **Auto Mode** — enable for a single slider to control a bundled preset.
 6. **Manual Mode** — tune individual parameters in the Parameters group.
@@ -121,20 +121,21 @@ This section documents every manual parameter exposed by the GUI and gives guida
 
 When **Auto Mode** is disabled, you can fine-tune the image post-processing pipeline manually using the following parameters:
 
-### Noise & Contrast
+### Noise
 
 * **Noise std (0–0.1)**
   Standard deviation of Gaussian noise applied to the image. Higher values introduce more noise, useful for simulating sensor artifacts.
 
-* **CLAHE clip**
-  Clip limit for Contrast Limited Adaptive Histogram Equalization (CLAHE). Controls the amount of contrast enhancement.
-
-* **CLAHE tile**
-  Number of tiles used in CLAHE grid. Larger values give finer local contrast adjustments.
-
 ---
 
 ### Fourier Domain Controls
+
+Recommended to use alongside the AI Normalizer at 300 steps.
+
+* **Fourier Algorithm Version**
+  * **V1 (Original)** — Per-channel radial FFT matching. It builds a 1D radial spectrum from each RGB channel, matches it against either a reference image or a 1/f^alpha model, applies optional phase perturbation, and blends the result back with a relatively softer multiplier range.
+  * **V2** — Similar to V1, but the spectrum is computed once from grayscale/luminance and then applied to all channels. It also supports grayscale input more cleanly, uses a wider multiplier range, and is the default Fourier alias in the code.
+  * **V3** — A different approach that works on the LAB L channel only. It uses a 2D Gaussian-blurred frequency mask instead of a 1D radial profile, protects low frequencies more aggressively, and recombines the processed L channel with the original chroma channels. So far it showed to be the most effective while being less destructive.
 
 * **Fourier cutoff (0–1)**
   Frequency cutoff threshold. Lower values preserve only low frequencies (smoothing), higher values retain more high-frequency detail.
@@ -186,26 +187,6 @@ When **Auto Mode** is disabled, you can fine-tune the image post-processing pipe
 
   * Combine moderate `glcm_strength` (0.4–0.8) with FFT matching for subtle realism.
   * Use fewer `glcm_levels` (e.g., 64 or 32) for speed and to avoid overfitting to noisy reference images.
-
----
-
-### Local Binary Patterns (LBP)
-
-* **What it is** — Local Binary Patterns encode a small neighbourhood around each pixel as a binary pattern, creating histograms that are very effective at characterizing micro-texture and local structure.
-
-* **When to use** — LBP histogram matching is useful when you want to replicate micro-textural characteristics like sensor grain, cloth weave, or repetitive fine structure from a reference image.
-
-* **Controls**
-
-  * **Radius** — radius of the circular neighbourhood (in pixels) used to compute LBP (default `3`). Larger radii capture coarser patterns.
-  * **N points** — number of sampling points around the circle (default `24`). More points increase descriptor resolution.
-  * **Method** — one of `default`, `ror` (rotation invariant), `uniform` (compact uniform patterns), or `var` (variance-based). Use `uniform` for compact, robust histograms by default.
-  * **Strength** — blending factor (0..1) controlling how strongly the LBP histogram from the reference influences the output (default `0.9`).
-
-* **Practical tips**
-
-  * Use `lbp_method='uniform'` and `lbp_n_points` 8–24 for stable results across natural images.
-  * Decrease `lbp_strength` for subtle grain matching; increase it if the output needs to closely follow the reference micro-texture.
 
 ---
 
