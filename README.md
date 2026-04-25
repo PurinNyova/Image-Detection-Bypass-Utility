@@ -24,6 +24,10 @@ Circumvention of AI Detection — all wrapped in a clean, user-friendly interfac
 ## Notice
 Due to the nature of this project, future updates will be under AGPL V3 license to ensure this project and its derivatives remains Open Source.
 
+## ComfyUI Notice
+Development on temporary pause as I focus my attention on improving the core algorithm, V2 GUI, and other repositories.
+
+
 ## Features
 
 * Select input, optional auto white-balance reference, optional FFT reference, and output paths with live previews.
