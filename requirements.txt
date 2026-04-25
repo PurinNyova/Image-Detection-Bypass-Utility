@@ -5,6 +5,9 @@ numpy
 matplotlib
 scikit-image
 piexif
+fastapi
+uvicorn
+python-multipart
 opencv-python
 --extra-index-url https://download.pytorch.org/whl/cu126
 torch==2.8.0+cu126

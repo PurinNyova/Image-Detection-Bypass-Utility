@@ -8,7 +8,9 @@ Added GLCM and LBP normalization using the same reference as FFT.
 """
 
 import argparse
+from io import BytesIO
 import os
+import sys
 from PIL import Image
 import numpy as np
 import piexif
@@ -29,6 +31,177 @@ from .utils import (
     FOURIER_VARIANTS,
 )
 from .camera_pipeline import simulate_camera_pipeline
+
+
+DEFAULT_STAGE_ORDER = [
+    'blend',
+    'non_semantic',
+    'clahe',
+    'fft',
+    'glcm',
+    'lbp',
+    'noise',
+    'perturb',
+    'sim_camera',
+    'awb',
+    'lut',
+]
+
+ARG_DEFAULTS = {
+    'input': None,
+    'output': None,
+    'awb': False,
+    'ref': None,
+    'noise_std': 0.02,
+    'clahe_clip': 2.0,
+    'tile': 8,
+    'cutoff': 0.25,
+    'fstrength': 0.9,
+    'randomness': 0.05,
+    'seed': None,
+    'fft_ref': None,
+    'fft_mode': 'auto',
+    'fft_alpha': 1.0,
+    'phase_perturb': 0.08,
+    'radial_smooth': 5,
+    'fft_variant': 'v2',
+    'glcm': False,
+    'glcm_distances': [1],
+    'glcm_angles': [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4],
+    'glcm_levels': 256,
+    'glcm_strength': 0.9,
+    'lbp': False,
+    'lbp_radius': 3,
+    'lbp_n_points': 24,
+    'lbp_method': 'uniform',
+    'lbp_strength': 0.9,
+    'non_semantic': False,
+    'ns_iterations': 500,
+    'ns_learning_rate': 3e-4,
+    'ns_t_lpips': 4e-2,
+    'ns_t_l2': 3e-5,
+    'ns_c_lpips': 1e-2,
+    'ns_c_l2': 0.6,
+    'ns_grad_clip': 0.05,
+    'sim_camera': False,
+    'no_no_bayer': True,
+    'jpeg_cycles': 1,
+    'jpeg_qmin': 88,
+    'jpeg_qmax': 96,
+    'vignette_strength': 0.35,
+    'chroma_strength': 1.2,
+    'iso_scale': 1.0,
+    'read_noise': 2.0,
+    'hot_pixel_prob': 1e-6,
+    'banding_strength': 0.0,
+    'motion_blur_kernel': 1,
+    'lut': None,
+    'lut_strength': 0.1,
+    'execution_order': False,
+    'noise': False,
+    'clahe': False,
+    'fft': False,
+    'perturb': False,
+    'perturb_magnitude': 0.008,
+    'blend': False,
+    'blend_tolerance': 10.0,
+    'blend_min_region': 50,
+    'blend_max_samples': 100000,
+    'blend_n_jobs': None,
+    'include_exif': True,
+    '_raw_argv': None,
+    '_stage_order': None,
+    '_lut_data': None,
+}
+
+MASTER_STAGE_FLAGS = {
+    '--blend': 'blend',
+    '--non-semantic': 'non_semantic',
+    '--clahe': 'clahe',
+    '--fft': 'fft',
+    '--glcm': 'glcm',
+    '--lbp': 'lbp',
+    '--noise': 'noise',
+    '--perturb': 'perturb',
+    '--sim-camera': 'sim_camera',
+    '--awb': 'awb',
+    '--lut': 'lut',
+}
+
+
+def is_stage_enabled(args, stage_name):
+    if stage_name == 'lut':
+        return bool(getattr(args, 'lut', None))
+    return bool(getattr(args, stage_name, False))
+
+
+def build_processing_args(
+    enabled_stages=None,
+    stage_config=None,
+    execution_order=False,
+    raw_argv=None,
+    stage_order=None,
+    input_path=None,
+    output_path=None,
+    ref_path=None,
+    fft_ref_path=None,
+    lut_path=None,
+    lut_data=None,
+    include_exif=True,
+):
+    values = dict(ARG_DEFAULTS)
+    values['input'] = input_path
+    values['output'] = output_path
+    values['ref'] = ref_path
+    values['fft_ref'] = fft_ref_path
+    values['include_exif'] = include_exif
+    values['execution_order'] = execution_order
+    values['_raw_argv'] = list(raw_argv) if raw_argv is not None else None
+    values['_stage_order'] = list(stage_order) if stage_order is not None else None
+    values['_lut_data'] = lut_data
+
+    if stage_config:
+        values.update(stage_config)
+
+    enabled_stage_set = set(enabled_stages or [])
+    for stage_name in DEFAULT_STAGE_ORDER:
+        if stage_name == 'lut':
+            continue
+        if stage_name in enabled_stage_set:
+            values[stage_name] = True
+
+    if lut_path is not None:
+        values['lut'] = lut_path
+
+    return argparse.Namespace(**values)
+
+
+def resolve_stage_order(args):
+    if not getattr(args, 'execution_order', False):
+        return list(DEFAULT_STAGE_ORDER)
+
+    explicit_stage_order = getattr(args, '_stage_order', None)
+    if explicit_stage_order is not None:
+        return list(explicit_stage_order)
+
+    raw_argv = getattr(args, '_raw_argv', None) or []
+    ordered_stages = []
+    seen = set()
+
+    for token in raw_argv:
+        if not token.startswith('--'):
+            continue
+        flag = token.split('=', 1)[0]
+        stage_name = MASTER_STAGE_FLAGS.get(flag)
+        if stage_name and stage_name not in seen:
+            ordered_stages.append(stage_name)
+            seen.add(stage_name)
+
+    for stage_name in DEFAULT_STAGE_ORDER:
+        if stage_name not in seen:
+            ordered_stages.append(stage_name)
+
+    return ordered_stages
 
 
 def add_fake_exif():
@@ -61,125 +234,212 @@ def add_fake_exif():
     return exif_bytes
 
 
-def process_image(path_in, path_out, args):
-    img = Image.open(path_in).convert('RGB')
-    arr = np.array(img)
+def encode_image_array(arr, output_format='PNG', include_exif=True):
+    normalized_format = output_format.upper()
+    if normalized_format == 'JPG':
+        normalized_format = 'JPEG'
+    if normalized_format not in ('PNG', 'JPEG'):
+        raise ValueError(f"Unsupported output format: {output_format}")
 
-    # Load FFT reference independently (used for FFT, GLCM, and LBP)
-    ref_arr_fft = None
-    if args.fft_ref:
+    out_img = Image.fromarray(arr)
+    fake_exif_bytes = add_fake_exif() if include_exif else None
+    save_kwargs = {'format': normalized_format}
+    if fake_exif_bytes is not None:
+        save_kwargs['exif'] = fake_exif_bytes
+
+    buffer = BytesIO()
+    out_img.save(buffer, **save_kwargs)
+    media_type = 'image/jpeg' if normalized_format == 'JPEG' else 'image/png'
+    return buffer.getvalue(), media_type
+
+
+def save_image_array(arr, path_out, include_exif=True):
+    out_img = Image.fromarray(arr)
+    if include_exif:
+        out_img.save(path_out, exif=add_fake_exif())
+    else:
+        out_img.save(path_out)
+
+
+def load_image_array(path):
+    return np.array(Image.open(path).convert('RGB'))
+
+
+def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
+    arr = np.array(arr, copy=True)
+
+    if ref_arr_fft is None and getattr(args, 'fft_ref', None):
         try:
-            ref_img_fft = Image.open(args.fft_ref).convert('RGB')
-            ref_arr_fft = np.array(ref_img_fft)
+            ref_arr_fft = load_image_array(args.fft_ref)
         except Exception as e:
             print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
             ref_arr_fft = None
 
-    # blend system
-    if args.blend:
+    if ref_arr_awb is None and getattr(args, 'ref', None):
         try:
-            arr = blend_colors(arr, tolerance=args.blend_tolerance, min_region_size=args.blend_min_region,
-                               max_kmeans_samples=args.blend_max_samples, n_jobs=args.blend_n_jobs)
+            ref_arr_awb = load_image_array(args.ref)
+        except Exception as e:
+            print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
+            ref_arr_awb = None
+
+    def run_blend(current_arr):
+        if not args.blend:
+            return current_arr
+        try:
+            return blend_colors(
+                current_arr,
+                tolerance=args.blend_tolerance,
+                min_region_size=args.blend_min_region,
+                max_kmeans_samples=args.blend_max_samples,
+                n_jobs=args.blend_n_jobs,
+            )
         except Exception as e:
             print(f"Warning: Blending failed: {e}. Skipping blending.")
+            return current_arr
 
-    # --- Non-semantic attack (if enabled) executed first ---
-    if args.non_semantic:
+    def run_non_semantic(current_arr):
+        if not args.non_semantic:
+            return current_arr
         print("Applying non-semantic attack...")
         try:
-            arr = attack_non_semantic(
-                arr,
+            return attack_non_semantic(
+                current_arr,
                 iterations=args.ns_iterations,
                 learning_rate=args.ns_learning_rate,
                 t_lpips=args.ns_t_lpips,
                 t_l2=args.ns_t_l2,
                 c_lpips=args.ns_c_lpips,
                 c_l2=args.ns_c_l2,
-                grad_clip_value=args.ns_grad_clip
+                grad_clip_value=args.ns_grad_clip,
             )
         except Exception as e:
             print(f"Warning: Non-semantic attack failed: {e}. Skipping non-semantic attack.")
+            return current_arr
 
-    # --- CLAHE color correction (if enabled) ---
-    if args.clahe:
-        arr = clahe_color_correction(arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
+    def run_clahe(current_arr):
+        if not args.clahe:
+            return current_arr
+        return clahe_color_correction(current_arr, clip_limit=args.clahe_clip, tile_grid_size=(args.tile, args.tile))
 
-    # --- FFT spectral matching (if enabled) ---
-    if args.fft:
+    def run_fft(current_arr):
+        if not args.fft:
+            return current_arr
         fft_variant = getattr(args, 'fft_variant', 'v2')
         fft_func = FOURIER_VARIANTS.get(fft_variant, fourier_match_spectrum)
-        fft_kwargs = dict(ref_img_arr=ref_arr_fft, mode=args.fft_mode,
-                          alpha=args.fft_alpha, cutoff=args.cutoff,
-                          strength=args.fstrength, randomness=args.randomness,
-                          seed=args.seed)
+        fft_kwargs = dict(
+            ref_img_arr=ref_arr_fft,
+            mode=args.fft_mode,
+            alpha=args.fft_alpha,
+            cutoff=args.cutoff,
+            strength=args.fstrength,
+            randomness=args.randomness,
+            seed=args.seed,
+            radial_smooth=args.radial_smooth,
+        )
         if fft_variant != 'v3':
             fft_kwargs['phase_perturb'] = args.phase_perturb
-        fft_kwargs['radial_smooth'] = args.radial_smooth
-        arr = fft_func(arr, **fft_kwargs)
+        return fft_func(current_arr, **fft_kwargs)
 
-    # GLCM normalization
-    if args.glcm:
-        arr = glcm_normalize(arr, ref_img_arr=ref_arr_fft, distances=args.glcm_distances,
-                             angles=args.glcm_angles, levels=args.glcm_levels,
-                             strength=args.glcm_strength, seed=args.seed)
+    def run_glcm(current_arr):
+        if not args.glcm:
+            return current_arr
+        return glcm_normalize(
+            current_arr,
+            ref_img_arr=ref_arr_fft,
+            distances=args.glcm_distances,
+            angles=args.glcm_angles,
+            levels=args.glcm_levels,
+            strength=args.glcm_strength,
+            seed=args.seed,
+        )
 
-    # LBP normalization
-    if args.lbp:
-        arr = lbp_normalize(arr, ref_img_arr=ref_arr_fft, radius=args.lbp_radius,
-                            n_points=args.lbp_n_points, method=args.lbp_method,
-                            strength=args.lbp_strength, seed=args.seed)
+    def run_lbp(current_arr):
+        if not args.lbp:
+            return current_arr
+        return lbp_normalize(
+            current_arr,
+            ref_img_arr=ref_arr_fft,
+            radius=args.lbp_radius,
+            n_points=args.lbp_n_points,
+            method=args.lbp_method,
+            strength=args.lbp_strength,
+            seed=args.seed,
+        )
 
-    # Gaussian noise addition
-    if args.noise:
-        arr = add_gaussian_noise(arr, std_frac=args.noise_std, seed=args.seed)
+    def run_noise(current_arr):
+        if not args.noise:
+            return current_arr
+        return add_gaussian_noise(current_arr, std_frac=args.noise_std, seed=args.seed)
 
-    # Randomized perturbation
-    if args.perturb:
-        arr = randomized_perturbation(arr, magnitude_frac=args.perturb_magnitude, seed=args.seed)
+    def run_perturb(current_arr):
+        if not args.perturb:
+            return current_arr
+        return randomized_perturbation(current_arr, magnitude_frac=args.perturb_magnitude, seed=args.seed)
 
-    # call the camera simulator if requested
-    if args.sim_camera:
-        arr = simulate_camera_pipeline(arr,
-                                       bayer=not args.no_no_bayer,
-                                       jpeg_cycles=args.jpeg_cycles,
-                                       jpeg_quality_range=(args.jpeg_qmin, args.jpeg_qmax),
-                                       vignette_strength=args.vignette_strength,
-                                       chroma_aberr_strength=args.chroma_strength,
-                                       iso_scale=args.iso_scale,
-                                       read_noise_std=args.read_noise,
-                                       hot_pixel_prob=args.hot_pixel_prob,
-                                       banding_strength=args.banding_strength,
-                                       motion_blur_kernel=args.motion_blur_kernel,
-                                       seed=args.seed)
-        
-    # --- Auto white-balance (if enabled) ---
-    if args.awb:
-        if args.ref:
-            try:
-                ref_img_awb = Image.open(args.ref).convert('RGB')
-                ref_arr_awb = np.array(ref_img_awb)
-                arr = auto_white_balance_ref(arr, ref_arr_awb)
-            except Exception as e:
-                print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
-        else:
-            print("Applying AWB using grey-world assumption...")
-            arr = auto_white_balance_ref(arr, None)
+    def run_sim_camera(current_arr):
+        if not args.sim_camera:
+            return current_arr
+        return simulate_camera_pipeline(
+            current_arr,
+            bayer=not args.no_no_bayer,
+            jpeg_cycles=args.jpeg_cycles,
+            jpeg_quality_range=(args.jpeg_qmin, args.jpeg_qmax),
+            vignette_strength=args.vignette_strength,
+            chroma_aberr_strength=args.chroma_strength,
+            iso_scale=args.iso_scale,
+            read_noise_std=args.read_noise,
+            hot_pixel_prob=args.hot_pixel_prob,
+            banding_strength=args.banding_strength,
+            motion_blur_kernel=args.motion_blur_kernel,
+            seed=args.seed,
+        )
 
-    # LUT application
-    if args.lut:
+    def run_awb(current_arr):
+        if not args.awb:
+            return current_arr
+        if ref_arr_awb is not None:
+            return auto_white_balance_ref(current_arr, ref_arr_awb)
+        print("Applying AWB using grey-world assumption...")
+        return auto_white_balance_ref(current_arr, None)
+
+    def run_lut(current_arr):
+        if not args.lut:
+            return current_arr
         try:
-            lut = load_lut(args.lut)
-            arr_uint8 = np.clip(arr, 0, 255).astype(np.uint8)
+            lut = getattr(args, '_lut_data', None)
+            if lut is None:
+                lut = load_lut(args.lut)
+            arr_uint8 = np.clip(current_arr, 0, 255).astype(np.uint8)
             arr_lut = apply_lut(arr_uint8, lut, strength=args.lut_strength)
-            arr = np.clip(arr_lut, 0, 255).astype(np.uint8)
+            return np.clip(arr_lut, 0, 255).astype(np.uint8)
         except Exception as e:
             print(f"Warning: failed to load/apply LUT '{args.lut}': {e}. Skipping LUT.")
+            return current_arr
 
-    out_img = Image.fromarray(arr)
+    stage_handlers = {
+        'blend': run_blend,
+        'non_semantic': run_non_semantic,
+        'clahe': run_clahe,
+        'fft': run_fft,
+        'glcm': run_glcm,
+        'lbp': run_lbp,
+        'noise': run_noise,
+        'perturb': run_perturb,
+        'sim_camera': run_sim_camera,
+        'awb': run_awb,
+        'lut': run_lut,
+    }
 
-    # Generate fake EXIF data and save it with the image
-    fake_exif_bytes = add_fake_exif()
-    out_img.save(path_out, exif=fake_exif_bytes)
+    for stage_name in resolve_stage_order(args):
+        arr = stage_handlers[stage_name](arr)
+
+    return arr
+
+
+def process_image(path_in, path_out, args):
+    arr = load_image_array(path_in)
+    arr = process_array(arr, args)
+    save_image_array(arr, path_out, include_exif=getattr(args, 'include_exif', True))
 
 
 def build_argparser():
@@ -248,6 +508,8 @@ def build_argparser():
     # LUT options
     p.add_argument('--lut', type=str, default=None, help='Path to a 1D PNG (256x1) or .npy LUT, or a .cube 3D LUT')
     p.add_argument('--lut-strength', type=float, default=0.1, help='Strength to blend LUT (0.0 = no effect, 1.0 = full LUT)')
+    p.add_argument('--execution-order', action='store_true', default=False,
+                   help='Execute enabled master stages in the order their flags appear in the CLI call')
 
     # New positive flags to enable utils functions
     p.add_argument('--noise', action='store_true', default=False, help='Enable Gaussian noise addition')
@@ -268,6 +530,7 @@ def build_argparser():
 
 if __name__ == "__main__":
     args = build_argparser().parse_args()
+    args._raw_argv = sys.argv[1:]
     if not os.path.exists(args.input):
         print("Input not found:", args.input)
         raise SystemExit(2)

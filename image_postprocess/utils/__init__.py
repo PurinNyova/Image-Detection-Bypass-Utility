@@ -1,6 +1,6 @@
 from .autowb import auto_white_balance_ref
 from .clahe import clahe_color_correction
-from .color_lut import load_lut, apply_lut
+from .color_lut import load_lut, load_lut_bytes, apply_lut
 from .exif import remove_exif_pil
 from .fourier_pipeline import fourier_match_spectrum as fourier_match_spectrum_v1
 from .fourier_pipeline_v2 import fourier_match_spectrum as fourier_match_spectrum_v2
@@ -25,6 +25,7 @@ __all__ = [
     'auto_white_balance_ref',
     'clahe_color_correction',
     'load_lut',
+    'load_lut_bytes',
     'apply_lut',
     'remove_exif_pil',
     'fourier_match_spectrum',
