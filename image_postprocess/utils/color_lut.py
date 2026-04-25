@@ -1,5 +1,6 @@
 import numpy as np
 import re, os
+from io import BytesIO
 from PIL import Image
 
 def apply_1d_lut(img_arr: np.ndarray, lut: np.ndarray, strength: float = 1.0) -> np.ndarray:
@@ -185,6 +186,76 @@ def load_cube_lut(path: str) -> np.ndarray:
         if lut.max() > 1.0 + 1e-6:
             lut = lut / 255.0
     return lut.astype(np.float32)
+
+
+def load_cube_lut_text(text: str, source_name: str = '<memory>') -> np.ndarray:
+    """
+    Parse a .cube payload from text and return a 3D LUT array.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith('#')]
+
+    size = None
+    data = []
+    domain_min = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    domain_max = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+
+    for ln in lines:
+        if ln.upper().startswith('LUT_3D_SIZE'):
+            parts = ln.split()
+            if len(parts) >= 2:
+                size = int(parts[1])
+        elif ln.upper().startswith('DOMAIN_MIN'):
+            parts = ln.split()
+            domain_min = np.array([float(p) for p in parts[1:4]], dtype=np.float32)
+        elif ln.upper().startswith('DOMAIN_MAX'):
+            parts = ln.split()
+            domain_max = np.array([float(p) for p in parts[1:4]], dtype=np.float32)
+        elif re.match(r'^-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s+-?\d+(\.\d+)?$', ln):
+            parts = [float(x) for x in ln.split()]
+            data.append(parts)
+
+    if size is None:
+        raise ValueError(f"LUT_3D_SIZE not found in .cube file: {source_name}")
+
+    data = np.array(data, dtype=np.float32)
+    if data.shape[0] != size**3:
+        raise ValueError("Cube LUT data length does not match size^3 (got {}, expected {})".format(data.shape[0], size**3))
+
+    lut = data.reshape((size, size, size, 3))
+    if not np.allclose(domain_min, [0.0, 0.0, 0.0]) or not np.allclose(domain_max, [1.0, 1.0, 1.0]):
+        lut = (lut - domain_min) / (domain_max - domain_min + 1e-12)
+        lut = np.clip(lut, 0.0, 1.0)
+    else:
+        if lut.max() > 1.0 + 1e-6:
+            lut = lut / 255.0
+    return lut.astype(np.float32)
+
+
+def load_lut_bytes(filename: str, data: bytes) -> np.ndarray:
+    """
+    Load a LUT from raw uploaded bytes.
+    """
+    ext = os.path.splitext(filename or '')[1].lower()
+    buffer = BytesIO(data)
+    if ext == '.npy':
+        return np.load(buffer)
+    if ext == '.cube':
+        return load_cube_lut_text(data.decode('utf-8', errors='ignore'), source_name=filename or '<memory>')
+
+    try:
+        im = Image.open(buffer).convert('RGB')
+        arr = np.array(im)
+        h, w = arr.shape[:2]
+        if (w == 256 and h == 1) or (h == 256 and w == 1):
+            if h == 1:
+                return arr[0, :, :].astype(np.float32)
+            return arr[:, 0, :].astype(np.float32)
+        flat = arr.reshape(-1, 3).astype(np.float32)
+        if flat.shape[0] <= 4096:
+            return flat
+        raise ValueError('Image LUT not recognized size')
+    except Exception as e:
+        raise ValueError(f"Unsupported LUT file or parse error for {filename or '<memory>'}: {e}")
 
 def load_lut(path: str) -> np.ndarray:
     """

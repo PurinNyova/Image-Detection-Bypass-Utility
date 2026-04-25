@@ -95,6 +95,44 @@ python run.py
 ./run.sh # also installs dependencies before running `python run.py`
 ```
 
+### FastAPI Backend
+
+The repository now includes a FastAPI backend for stage-by-stage or multi-stage processing.
+
+Contract:
+
+- See `contract.md` for the API-first request and response contract.
+
+Run the backend locally:
+
+```bash
+python run_api.py
+```
+
+Or with Uvicorn directly:
+
+```bash
+uvicorn api_backend.app:app --host 127.0.0.1 --port 8000
+```
+
+Key routes:
+
+* `GET /health`
+* `POST /api/v1/process/noise`
+* `POST /api/v1/process/clahe`
+* `POST /api/v1/process/fft`
+* `POST /api/v1/process/pipeline`
+
+The backend uses multipart uploads and returns the processed image as the response body.
+
+Curl-based smoke test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test_api_with_curl.ps1
+```
+
+The script generates temporary sample fixtures, hits the health endpoint, exercises all single-stage routes plus both pipeline modes, and auto-starts `run_api.py` if the API is not already running. Use `-SkipStages non_semantic` if you want a faster pass or your local environment does not have that optional stack available.
+
 ---
 
 ## Using the GUI (at-a-glance)
