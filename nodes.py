@@ -343,69 +343,41 @@ class NovaNodes:
                 # utility flags (positive-style equivalents)
                 perturb=(True if perturb_mag_frac > 0 else False),
                 perturb_magnitude=float(perturb_mag_frac),
-                blend=False
+                blend=False,
+
+                # Forensic camera (replaces piexif stub when apply_exif_o)
+                forensic_camera=bool(apply_exif_o),
+                forensic_profile="iphone_16_pro",
+                forensic_software="18.5",
+                forensic_datetime=None,
+                ela_flatten=True,
+                strip_fingerprints=True,
+                gps_lat=None,
+                gps_lon=None,
+                gps_alt=None,
             )
 
-            # ---- Run the processing function ----
+            # ---- Run the processing function (forensic EXIF is written here) ----
             process_image(input_path, output_path, args)
 
-            # ---- Load result (force RGB) ----
             output_img = Image.open(output_path).convert("RGB")
             img_out = np.array(output_img)
+            tensor_out = torch.from_numpy(img_out.astype(np.float32) / 255.0).unsqueeze(0)
 
-            # ---- EXIF insertion (optional) ----
             new_exif = ""
             if apply_exif_o:
                 try:
-                    output_img_with_exif, new_exif = self._add_fake_exif(output_img)
-                    output_img = output_img_with_exif
-                fft=bool(fft_opts.get("apply_fourier_o", True)),
-                fstrength=float(fft_opts.get("fourier_strength", 0.9)) if bool(fft_opts.get("apply_fourier_o", True)) else 0.0,
-                randomness=float(fft_opts.get("fourier_randomness", 0.05)),
-
-                fft_mode=str(fft_opts.get("fourier_mode", "auto")),
-                fft_alpha=float(fft_opts.get("fourier_alpha", 1.0)),
-                phase_perturb=float(fft_opts.get("fourier_phase_perturb", 0.08)),
-                radial_smooth=int(fft_opts.get("fourier_radial_smooth", 5)),
-                cutoff=float(fft_opts.get("fourier_cutoff", 0.25)),
+                    import piexif
+                    new_exif = str(piexif.load(output_path))
+                except Exception:
+                    new_exif = "forensic_camera=iphone_16_pro"
             return (tensor_out, new_exif)
-
-                glcm=bool(glcm_opts.get("glcm", False)),
+        finally:
             for p in tmp_files:
                 try:
-                glcm_levels=int(glcm_opts.get("glcm_levels", 256)),
-                glcm_strength=float(glcm_opts.get("glcm_strength", 0.9)),
+                    os.unlink(p)
+                except Exception:
                     pass
-
-    def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:
-        """Insert random but realistic camera EXIF metadata."""
-        import random
-        import io
-        try:
-            import piexif
-        except Exception:
-            raise
-
-        exif_dict = {
-            "0th": {
-                piexif.ImageIFD.Make: random.choice(["Canon", "Nikon", "Sony", "Fujifilm", "Olympus", "Leica"]),
-                piexif.ImageIFD.Model: random.choice([
-                    "EOS 5D Mark III", "D850", "Alpha 7R IV", "X-T4", "OM-D E-M1 Mark III", "Q2"
-                ]),
-                piexif.ImageIFD.Software: "Adobe Lightroom",
-            },
-            "Exif": {
-                piexif.ExifIFD.FNumber: (random.randint(10, 22), 10),
-                piexif.ExifIFD.ExposureTime: (1, random.randint(60, 4000)),
-                piexif.ExifIFD.ISOSpeedRatings: random.choice([100, 200, 400, 800, 1600, 3200]),
-                piexif.ExifIFD.FocalLength: (random.randint(24, 200), 1),
-            },
-        }
-        exif_bytes = piexif.dump(exif_dict)
-        output = io.BytesIO()
-        img.save(output, format="JPEG", exif=exif_bytes)
-        output.seek(0)
-        return (Image.open(output), str(exif_bytes))
 
 
 # -------------

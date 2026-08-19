@@ -29,6 +29,7 @@ from .utils import (
     FOURIER_VARIANTS,
 )
 from .camera_pipeline import simulate_camera_pipeline
+from .forensic_camera import ForensicOptions, apply_forensic_camera
 
 
 def add_fake_exif():
@@ -175,11 +176,36 @@ def process_image(path_in, path_out, args):
         except Exception as e:
             print(f"Warning: failed to load/apply LUT '{args.lut}': {e}. Skipping LUT.")
 
-    out_img = Image.fromarray(arr)
+    out_img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
-    # Generate fake EXIF data and save it with the image
-    fake_exif_bytes = add_fake_exif()
-    out_img.save(path_out, exif=fake_exif_bytes)
+    if getattr(args, "forensic_camera", True):
+        dt = None
+        dt_s = getattr(args, "forensic_datetime", None) or None
+        if dt_s:
+            try:
+                dt = datetime.strptime(str(dt_s).strip(), "%Y:%m:%d %H:%M:%S")
+            except ValueError:
+                dt = datetime.strptime(str(dt_s).strip(), "%Y-%m-%d %H:%M:%S")
+        gps_lat = getattr(args, "gps_lat", None)
+        gps_lon = getattr(args, "gps_lon", None)
+        gps_alt = getattr(args, "gps_alt", None)
+        opts = ForensicOptions(
+            profile=getattr(args, "forensic_profile", "iphone_16_pro") or "iphone_16_pro",
+            software=getattr(args, "forensic_software", None) or None,
+            datetime_original=dt,
+            iso=getattr(args, "forensic_iso", None),
+            gps_lat=float(gps_lat) if gps_lat not in (None, "",) else None,
+            gps_lon=float(gps_lon) if gps_lon not in (None, "",) else None,
+            gps_alt=float(gps_alt) if gps_alt not in (None, "",) else None,
+            ela_flatten=bool(getattr(args, "ela_flatten", True)),
+            strip_fingerprints=bool(getattr(args, "strip_fingerprints", True)),
+            seed=getattr(args, "seed", None),
+            source_name=os.path.basename(path_in),
+        )
+        apply_forensic_camera(out_img, path_out, opts)
+    else:
+        fake_exif_bytes = add_fake_exif()
+        out_img.save(path_out, exif=fake_exif_bytes)
 
 
 def build_argparser():
@@ -262,6 +288,25 @@ def build_argparser():
     p.add_argument('--blend-min-region', type=int, default=50, help='Minimum region size to retain (in pixels)')
     p.add_argument('--blend-max-samples', type=int, default=100000, help='Maximum pixels to sample for k-means (for speed)')
     p.add_argument('--blend-n-jobs', type=int, default=None, help='Number of worker threads for blending (default: os.cpu_count())')
+
+    # Forensic camera (iPhone 16 Pro EXIF + Apple DQT + ELA flatten)
+    p.add_argument('--forensic-camera', dest='forensic_camera', action='store_true', default=True,
+                   help='Write iPhone-like JPEG (Apple DQT, MakerNote, shooting EXIF, optional GPS, ELA flatten)')
+    p.add_argument('--no-forensic-camera', dest='forensic_camera', action='store_false',
+                   help='Disable forensic camera write; fall back to piexif stub')
+    p.add_argument('--forensic-profile', default='iphone_16_pro', help='Camera profile name')
+    p.add_argument('--forensic-software', default='18.5', help='EXIF Software (iPhone writes version only)')
+    p.add_argument('--forensic-datetime', default=None, help='DateTimeOriginal as "YYYY:MM:DD HH:MM:SS"')
+    p.add_argument('--forensic-iso', type=int, default=None, help='ISO; random 50-100 if omitted')
+    p.add_argument('--gps-lat', type=float, default=None, help='GPS latitude (omit to skip GPS)')
+    p.add_argument('--gps-lon', type=float, default=None, help='GPS longitude')
+    p.add_argument('--gps-alt', type=float, default=None, help='GPS altitude metres')
+    p.add_argument('--ela-flatten', dest='ela_flatten', action='store_true', default=True,
+                   help='Global blur+noise then one JPEG generation (default on)')
+    p.add_argument('--no-ela-flatten', dest='ela_flatten', action='store_false')
+    p.add_argument('--strip-fingerprints', dest='strip_fingerprints', action='store_true', default=True,
+                   help='Strip JFIF/XMP/C2PA/AIGC tool tags (default on)')
+    p.add_argument('--no-strip-fingerprints', dest='strip_fingerprints', action='store_false')
 
     return p
 
