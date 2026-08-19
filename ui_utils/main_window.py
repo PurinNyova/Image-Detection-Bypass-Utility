@@ -523,6 +523,56 @@ class MainWindow(QMainWindow):
         self.params_box.setVisible(not getbool("General", "auto_mode", True))
         self.texture_box.setVisible(not getbool("General", "auto_mode", True))
 
+        # Forensic camera (iPhone EXIF / Apple DQT / ELA)
+        self.forensic_box = CollapsibleBox("Forensic camera (iPhone 16 Pro)")
+        right_v.addWidget(self.forensic_box)
+        forensic_layout = QFormLayout()
+        forensic_container = QWidget()
+        forensic_container.setLayout(forensic_layout)
+        self.forensic_box.content_layout.addWidget(forensic_container)
+
+        self.forensic_chk = QCheckBox("Enable forensic camera JPEG (MakerNote, Apple DQT, ELA)")
+        self.forensic_chk.setChecked(getbool("ForensicCamera", "enabled", True))
+        self.forensic_chk.setToolTip("Last encode: iPhone 16 Pro identity, Apple quantization tables, optional GPS, ELA flatten, strip AI/tool tags.")
+        forensic_layout.addRow(self.forensic_chk)
+
+        self.forensic_software = QLineEdit(get("ForensicCamera", "software", "18.5"))
+        forensic_layout.addRow("Software (iOS version)", self.forensic_software)
+
+        self.forensic_datetime = QLineEdit(get("ForensicCamera", "datetime", ""))
+        self.forensic_datetime.setPlaceholderText("YYYY:MM:DD HH:MM:SS (empty = now)")
+        forensic_layout.addRow("DateTimeOriginal", self.forensic_datetime)
+
+        self.ela_flatten_chk = QCheckBox("ELA flatten (global blur+noise, one JPEG generation)")
+        self.ela_flatten_chk.setChecked(getbool("ForensicCamera", "ela_flatten", True))
+        forensic_layout.addRow(self.ela_flatten_chk)
+
+        self.strip_fp_chk = QCheckBox("Strip JFIF / XMP / C2PA / AIGC fingerprints")
+        self.strip_fp_chk.setChecked(getbool("ForensicCamera", "strip_fingerprints", True))
+        forensic_layout.addRow(self.strip_fp_chk)
+
+        self.gps_chk = QCheckBox("Write GPS")
+        self.gps_chk.setChecked(getbool("ForensicCamera", "gps", False))
+        forensic_layout.addRow(self.gps_chk)
+
+        self.gps_lat_spin = QDoubleSpinBox()
+        self.gps_lat_spin.setDecimals(7)
+        self.gps_lat_spin.setRange(-90.0, 90.0)
+        self.gps_lat_spin.setValue(get("ForensicCamera", "gps_lat", 0.0, float))
+        forensic_layout.addRow("GPS latitude", self.gps_lat_spin)
+
+        self.gps_lon_spin = QDoubleSpinBox()
+        self.gps_lon_spin.setDecimals(7)
+        self.gps_lon_spin.setRange(-180.0, 180.0)
+        self.gps_lon_spin.setValue(get("ForensicCamera", "gps_lon", 0.0, float))
+        forensic_layout.addRow("GPS longitude", self.gps_lon_spin)
+
+        self.gps_alt_spin = QDoubleSpinBox()
+        self.gps_alt_spin.setDecimals(1)
+        self.gps_alt_spin.setRange(-500.0, 9000.0)
+        self.gps_alt_spin.setValue(get("ForensicCamera", "gps_alt", 0.0, float))
+        forensic_layout.addRow("GPS altitude (m)", self.gps_alt_spin)
+
         self.ref_hint = QLabel("AWB uses the 'AWB reference' chooser. FFT spectral matching uses the 'FFT Reference' chooser.")
         right_v.addWidget(self.ref_hint)
 
@@ -742,6 +792,21 @@ class MainWindow(QMainWindow):
         else:
             args.lut = None
             args.lut_strength = 1.0
+
+        args.forensic_camera = bool(self.forensic_chk.isChecked())
+        args.forensic_profile = "iphone_16_pro"
+        args.forensic_software = self.forensic_software.text().strip() or "18.5"
+        args.forensic_datetime = self.forensic_datetime.text().strip() or None
+        args.ela_flatten = bool(self.ela_flatten_chk.isChecked())
+        args.strip_fingerprints = bool(self.strip_fp_chk.isChecked())
+        if self.gps_chk.isChecked():
+            args.gps_lat = float(self.gps_lat_spin.value())
+            args.gps_lon = float(self.gps_lon_spin.value())
+            args.gps_alt = float(self.gps_alt_spin.value())
+        else:
+            args.gps_lat = None
+            args.gps_lon = None
+            args.gps_alt = None
 
         self.worker = Worker(inpath, outpath, args)
         self.worker.finished.connect(self.on_finished)

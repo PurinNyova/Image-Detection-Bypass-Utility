@@ -34,6 +34,7 @@ Development on temporary pause as I focus my attention on improving the core alg
 * **Auto Mode**: one slider to control an expressive preset of postprocess parameters.
 * **Manual Mode**: full access to noise, FFT, phase perturbation, pixel perturbation, etc.
 * Camera pipeline simulator: Bayer/demosaic, JPEG cycles/quality, vignette, chromatic aberration, motion blur, hot pixels, read-noise, banding.
+* **Forensic camera JPEG** (default on): iPhone 16 Pro identity + Apple MakerNote + shooting EXIF + optional GPS + Apple quantization tables + ELA flatten + strip C2PA/XMP/JFIF/AIGC tags. See [`image_postprocess/forensic_camera/README.md`](image_postprocess/forensic_camera/README.md). Requires [ExifTool](https://exiftool.org/) on `PATH` or `EXIFTOOL_PATH` for MakerNotes.
 * Input / output analysis panels (via `AnalysisPanel`) to inspect images before/after processing.
 * Background worker thread with progress reporting and rich error dialog (traceback viewer).
 
