@@ -1,2 +1,5 @@
 __pycache__/
 .vscode/
+image_postprocess/bin/
+*.pyc
+.DS_Store
