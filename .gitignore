@@ -6,4 +6,5 @@ image_postprocess/bin/
 .opencode
 .next/
 node_modules/
+.tmp/
 tsconfig.tsbuildinfo
