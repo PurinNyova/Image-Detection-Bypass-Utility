@@ -13,6 +13,7 @@ from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.cors import CORSMiddleware
 
 from image_postprocess.forensic_camera import ForensicOptions, apply_forensic_camera
 from image_postprocess.forensic_camera.exiftool_bin import find_exiftool
@@ -362,3 +363,14 @@ for _stage, _segment in _PUBLIC_SEGMENT.items():
 router.add_api_route('/forensic-camera', _forensic_endpoint(), methods=['POST'], name='forensic_camera')
 
 app.include_router(router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ],
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['Content-Type'],
+    expose_headers=['X-Process', 'X-Output-Format', 'X-Forensic-Metadata'],
+)

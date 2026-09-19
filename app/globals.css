@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #fafafa;
+  --text: #18181b;
+  --text-muted: #71717a;
+  --border: #e4e4e7;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
+
+  --font-heading: "Space Grotesk", sans-serif;
+  --font-body: "DM Sans", sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #18181b;
+  --surface: #27272a;
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --border: #3f3f46;
+  --success: #34d399;
+  --error: #f87171;
+  --warning: #fbbf24;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-success: var(--success);
+  --color-error: var(--error);
+  --color-warning: var(--warning);
+
+  --color-violet-50: #f7f6f8;
+  --color-violet-100: #ece9f1;
+  --color-violet-200: #d5cae7;
+  --color-violet-300: #b399e1;
+  --color-violet-400: #8a59de;
+  --color-violet-500: #7c3aed;
+  --color-violet-600: #6620df;
+  --color-violet-700: #5612c9;
+  --color-violet-800: #470cac;
+  --color-violet-900: #390f80;
+  --color-violet-950: #2a0f57;
+
+  --color-pink-50: #f8f6f7;
+  --color-pink-100: #f1eaed;
+  --color-pink-200: #e7cbd9;
+  --color-pink-300: #e09abc;
+  --color-pink-400: #dc5b9b;
+  --color-pink-500: #dd227e;
+  --color-pink-600: #c7156d;
+  --color-pink-700: #aa0e5b;
+  --color-pink-800: #7e1047;
+  --color-pink-900: #561033;
+
+  --color-cyan-500: #06b6d4;
+
+  --color-zinc-50: #f7f7f7;
+  --color-zinc-100: #ededed;
+  --color-zinc-200: #d8d8d9;
+  --color-zinc-300: #bbbbbe;
+  --color-zinc-400: #99999f;
+  --color-zinc-500: #7b7b84;
+  --color-zinc-600: #696972;
+  --color-zinc-700: #58585f;
+  --color-zinc-800: #45454a;
+  --color-zinc-900: #313135;
+
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: var(--radius-full);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #7c3aed;
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button,
+  input,
+  select,
+  textarea,
+  a {
+    transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+  }
+}
