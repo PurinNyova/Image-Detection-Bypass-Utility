@@ -170,6 +170,10 @@ class NovaNodes:
         "ns_c_lpips": 1e-2,
         "ns_c_l2": 0.6,
         "ns_grad_clip": 0.05,
+        "ns_adaptive_c_lpips": True,
+        "ns_c_lpips_min": 1e-4,
+        "ns_c_lpips_max": 1.0,
+        "ns_search_interval": 40,
     }
 
     def process(self, image,
@@ -321,6 +325,10 @@ class NovaNodes:
                 ns_c_lpips=float(ns_opts.get("ns_c_lpips", 1e-2)),
                 ns_c_l2=float(ns_opts.get("ns_c_l2", 0.6)),
                 ns_grad_clip=float(ns_opts.get("ns_grad_clip", 0.05)),
+                ns_adaptive_c_lpips=bool(ns_opts.get("ns_adaptive_c_lpips", True)),
+                ns_c_lpips_min=float(ns_opts.get("ns_c_lpips_min", 1e-4)),
+                ns_c_lpips_max=float(ns_opts.get("ns_c_lpips_max", 1.0)),
+                ns_search_interval=int(ns_opts.get("ns_search_interval", 40)),
 
                 # Camera simulator options (from cam_opts)
                 sim_camera=True,
@@ -359,22 +367,22 @@ class NovaNodes:
                 try:
                     output_img_with_exif, new_exif = self._add_fake_exif(output_img)
                     output_img = output_img_with_exif
-                fft=bool(fft_opts.get("apply_fourier_o", True)),
-                fstrength=float(fft_opts.get("fourier_strength", 0.9)) if bool(fft_opts.get("apply_fourier_o", True)) else 0.0,
-                randomness=float(fft_opts.get("fourier_randomness", 0.05)),
+                    img_out = np.array(output_img.convert("RGB"))
+                except Exception:
+                    new_exif = ""
 
-                fft_mode=str(fft_opts.get("fourier_mode", "auto")),
-                fft_alpha=float(fft_opts.get("fourier_alpha", 1.0)),
-                phase_perturb=float(fft_opts.get("fourier_phase_perturb", 0.08)),
-                radial_smooth=int(fft_opts.get("fourier_radial_smooth", 5)),
-                cutoff=float(fft_opts.get("fourier_cutoff", 0.25)),
+            # ---- Convert to FOOLAI-style tensor: (1, H, W, C), float32 in [0,1] ----
+            img_float = img_out.astype(np.float32) / 255.0
+            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)
+            tensor_out = torch.clamp(tensor_out, 0.0, 1.0)
+
             return (tensor_out, new_exif)
 
-                glcm=bool(glcm_opts.get("glcm", False)),
+        finally:
             for p in tmp_files:
                 try:
-                glcm_levels=int(glcm_opts.get("glcm_levels", 256)),
-                glcm_strength=float(glcm_opts.get("glcm_strength", 0.9)),
+                    os.unlink(p)
+                except Exception:
                     pass
 
     def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:

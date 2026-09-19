@@ -254,6 +254,11 @@ class MainWindow(QMainWindow):
         self.ns_grad_clip_spin.setToolTip("Gradient clipping threshold to stabilize training.")
         ai_layout.addRow("Gradient Clip", self.ns_grad_clip_spin)
 
+        self.ns_adaptive_c_lpips = getbool("AINormalizer", "adaptive_c_lpips", True)
+        self.ns_c_lpips_min = get("AINormalizer", "c_lpips_min", 1e-4, float)
+        self.ns_c_lpips_max = get("AINormalizer", "c_lpips_max", 1.0, float)
+        self.ns_search_interval = get("AINormalizer", "search_interval", 40, int)
+
         # Parameters (Manual Mode) collapsible
         self.params_box = CollapsibleBox("Parameters (Manual Mode)")
         right_v.addWidget(self.params_box)
@@ -273,7 +278,7 @@ class MainWindow(QMainWindow):
 
         # FFT variant selector
         self.fft_variant_combo = QComboBox()
-        self.fft_variant_combo.addItems(["v1 (Original)", "v2", "v3"])
+        self.fft_variant_combo.addItems(["v1 (Original)", "v2", "v3", "v4"])
         self.fft_variant_combo.setCurrentText(get("ManualParameters", "fft_variant", "v2"))
         self.fft_variant_combo.setToolTip("Select which Fourier pipeline variant to use")
         params_layout.addRow("FFT Variant", self.fft_variant_combo)
@@ -722,6 +727,10 @@ class MainWindow(QMainWindow):
             args.ns_c_lpips = float(self.ns_c_lpips_spin.value())
             args.ns_c_l2 = float(self.ns_c_l2_spin.value())
             args.ns_grad_clip = float(self.ns_grad_clip_spin.value())
+            args.ns_adaptive_c_lpips = bool(self.ns_adaptive_c_lpips)
+            args.ns_c_lpips_min = float(self.ns_c_lpips_min)
+            args.ns_c_lpips_max = float(self.ns_c_lpips_max)
+            args.ns_search_interval = int(self.ns_search_interval)
 
         # AWB handling
         if self.awb_chk.isChecked():
