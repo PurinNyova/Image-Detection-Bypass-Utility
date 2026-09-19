@@ -16,7 +16,7 @@ The module expects two positional arguments:
 * `input` - source image path
 * `output` - destination image path
 
-The pipeline always loads the input as RGB, processes it in memory, adds fake EXIF metadata, and saves the result.
+The pipeline always loads the input as RGB, processes it in memory, then writes a JPEG via the **forensic camera** path (Apple DQT, iPhone 16 Pro EXIF/MakerNote, optional GPS, ELA flatten) unless `--no-forensic-camera` is set.
 
 ## Processing Order
 
@@ -33,7 +33,7 @@ When multiple effects are enabled, the pipeline applies them in this order:
 9. Run the camera simulator if `--sim-camera` is enabled
 10. Apply auto white balance if `--awb` is enabled
 11. Apply LUT mapping if `--lut` is provided
-12. Save the output with generated fake EXIF data
+12. Save via forensic camera (Apple DQT + iPhone EXIF + ELA flatten) or piexif stub if `--no-forensic-camera`
 
 ## Basic Usage
 
