@@ -266,13 +266,15 @@ def load_image_array(path):
     return np.array(Image.open(path).convert('RGB'))
 
 
-def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
+def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None, fail_fast=False):
     arr = np.array(arr, copy=True)
 
     if ref_arr_fft is None and getattr(args, 'fft_ref', None):
         try:
             ref_arr_fft = load_image_array(args.fft_ref)
         except Exception as e:
+            if fail_fast:
+                raise
             print(f"Warning: failed to load FFT reference '{args.fft_ref}': {e}. Skipping FFT reference matching.")
             ref_arr_fft = None
 
@@ -280,6 +282,8 @@ def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
         try:
             ref_arr_awb = load_image_array(args.ref)
         except Exception as e:
+            if fail_fast:
+                raise
             print(f"Warning: failed to load AWB reference '{args.ref}': {e}. Skipping AWB.")
             ref_arr_awb = None
 
@@ -295,6 +299,8 @@ def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
                 n_jobs=args.blend_n_jobs,
             )
         except Exception as e:
+            if fail_fast:
+                raise
             print(f"Warning: Blending failed: {e}. Skipping blending.")
             return current_arr
 
@@ -318,6 +324,8 @@ def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
                 search_interval=getattr(args, 'ns_search_interval', 40),
             )
         except Exception as e:
+            if fail_fast:
+                raise
             print(f"Warning: Non-semantic attack failed: {e}. Skipping non-semantic attack.")
             return current_arr
 
@@ -418,6 +426,8 @@ def process_array(arr, args, ref_arr_awb=None, ref_arr_fft=None):
             arr_lut = apply_lut(arr_uint8, lut, strength=args.lut_strength)
             return np.clip(arr_lut, 0, 255).astype(np.uint8)
         except Exception as e:
+            if fail_fast:
+                raise
             print(f"Warning: failed to load/apply LUT '{args.lut}': {e}. Skipping LUT.")
             return current_arr
 

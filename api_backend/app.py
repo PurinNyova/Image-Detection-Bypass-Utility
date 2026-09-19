@@ -1,21 +1,30 @@
 import json
-from io import BytesIO
-from typing import Any
+import logging
+import os
+import re
+import tempfile
+from datetime import datetime
+from typing import Literal
 
 import numpy as np
-from fastapi import APIRouter, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
-from image_postprocess.processor import DEFAULT_STAGE_ORDER, build_processing_args, encode_image_array, process_array
-from image_postprocess.utils import FOURIER_VARIANTS, load_lut_bytes
+from image_postprocess.forensic_camera import ForensicOptions, apply_forensic_camera
+from image_postprocess.forensic_camera.exiftool_bin import find_exiftool
+from image_postprocess.processor import build_processing_args, encode_image_array, process_array
+from image_postprocess.utils import load_lut_bytes
 
 from .schemas import (
     AWBConfig,
     BlendConfig,
     ClaheConfig,
     FFTConfig,
+    ForensicConfig,
     GLCMConfig,
     LBPConfig,
     LUTConfig,
@@ -23,11 +32,15 @@ from .schemas import (
     NonSemanticConfig,
     OutputFormat,
     PerturbConfig,
-    PipelineConfig,
     SimCameraConfig,
     StageName,
 )
 
+logger = logging.getLogger('uvicorn.error')
+
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+_UPLOAD_CHUNK = 1024 * 1024
+_DATETIME_FORMATS = ('%Y:%m:%d %H:%M:%S', '%Y-%m-%d %H:%M:%S')
 
 STAGE_MODELS = {
     'blend': BlendConfig,
@@ -43,8 +56,12 @@ STAGE_MODELS = {
     'lut': LUTConfig,
 }
 
-STAGE_ROUTE_SEGMENTS = {
-    'blend': 'blend',
+REF_AWB_STAGES = {'awb'}
+REF_FFT_STAGES = {'fft', 'glcm', 'lbp'}
+LUT_STAGES = {'lut'}
+
+_PUBLIC_SEGMENT = {
+    'blend': 'color-blend',
     'non_semantic': 'non-semantic',
     'clahe': 'clahe',
     'fft': 'fft',
@@ -57,14 +74,10 @@ STAGE_ROUTE_SEGMENTS = {
     'lut': 'lut',
 }
 
-REF_AWB_STAGES = {'awb'}
-REF_FFT_STAGES = {'fft', 'glcm', 'lbp'}
-LUT_STAGES = {'lut'}
-
 app = FastAPI(
     title='Image Detection Bypass Utility API',
     version='1.0.0',
-    description='FastAPI backend for running individual image post-processing stages and ordered multi-stage pipelines.',
+    description='FastAPI backend for running individual image post-processing stages.',
 )
 router = APIRouter(prefix='/api/v1', tags=['processing'])
 
@@ -74,111 +87,267 @@ def _parse_json_config(config_raw: str | None, model_cls):
         payload = json.loads(config_raw) if config_raw else {}
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f'Invalid JSON in config: {exc.msg}') from exc
-
     try:
         return model_cls.model_validate(payload)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=json.loads(exc.json())) from exc
 
 
-async def _read_image(upload: UploadFile | None, field_name: str) -> np.ndarray | None:
+def _sanitize_name(filename: str | None, fallback: str) -> str:
+    base = os.path.basename(filename or '').strip()
+    ascii_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', base)
+    ascii_safe = ascii_safe.strip('._-') or fallback
+    return ascii_safe[:64]
+
+
+async def _read_bounded(upload: UploadFile, field_name: str) -> bytes:
     if upload is None:
-        return None
-    data = await upload.read()
-    if not data:
+        raise HTTPException(status_code=400, detail=f'{field_name} is required')
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail=f'{field_name} exceeds {MAX_UPLOAD_BYTES} byte upload cap')
+        chunks.append(chunk)
+    if not chunks:
         raise HTTPException(status_code=400, detail=f'{field_name} is empty')
+    return b''.join(chunks)
+
+
+def _decode_rgb(data: bytes, field_name: str) -> np.ndarray:
+    from io import BytesIO
     try:
         image = Image.open(BytesIO(data)).convert('RGB')
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, OSError, DecompressionBombError) as exc:
         raise HTTPException(status_code=400, detail=f'{field_name} is not a valid image') from exc
     return np.array(image)
 
 
-async def _read_lut(upload: UploadFile | None):
-    if upload is None:
-        return None, None
-    data = await upload.read()
-    if not data:
-        raise HTTPException(status_code=400, detail='lut_file is empty')
-    try:
-        lut = load_lut_bytes(upload.filename or 'upload.lut', data)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return lut, upload.filename or 'upload.lut'
+async def _reject_extras(request: Request, allowed: set[str]):
+    form_keys = set((await request.form()).keys())
+    extras = [key for key in form_keys if key not in allowed]
+    if extras:
+        raise HTTPException(status_code=422, detail=f'Unknown form field(s): {", ".join(sorted(extras))}')
 
 
-def _validate_stage_config(stage_name: StageName, payload: dict[str, Any]):
-    model_cls = STAGE_MODELS[stage_name]
-    try:
-        return model_cls.model_validate(payload).model_dump()
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=json.loads(exc.json())) from exc
-
-
-def _validate_pipeline_order(config: PipelineConfig) -> list[StageName]:
-    enabled_stages = list(config.stages.keys())
-    if config.execution_order:
-        if not config.stage_order:
-            raise HTTPException(status_code=400, detail='stage_order is required when execution_order is true')
-        if len(config.stage_order) != len(set(config.stage_order)):
-            raise HTTPException(status_code=400, detail='stage_order cannot contain duplicates')
-        missing = [stage for stage in enabled_stages if stage not in config.stage_order]
-        extra = [stage for stage in config.stage_order if stage not in config.stages]
-        if missing:
-            raise HTTPException(status_code=400, detail=f'stage_order is missing enabled stages: {", ".join(missing)}')
-        if extra:
-            raise HTTPException(status_code=400, detail=f'stage_order contains stages not present in stages: {", ".join(extra)}')
-        return list(config.stage_order)
-    return [stage for stage in DEFAULT_STAGE_ORDER if stage in config.stages]
-
-
-def _build_response(arr, output_format: OutputFormat, include_exif: bool, stage_order: list[str]):
-    image_bytes, media_type = encode_image_array(arr, output_format=output_format, include_exif=include_exif)
-    headers = {
-        'X-Stage-Count': str(len(stage_order)),
-        'X-Stage-Order': ','.join(stage_order),
-    }
-    return Response(content=image_bytes, media_type=media_type, headers=headers)
-
-
-async def _run_stage_request(
-    stage_name: StageName,
-    config_raw: str | None,
-    image: UploadFile,
-    output_format: OutputFormat,
-    include_exif: bool,
-    ref_image: UploadFile | None = None,
-    fft_ref_image: UploadFile | None = None,
-    lut_file: UploadFile | None = None,
+async def _handle_stage(
+    *, stage_name: StageName, request: Request,
+    image: UploadFile, config_raw: str | None,
+    output_format: OutputFormat, include_exif: bool,
+    reference_image: UploadFile | None, lut_file: UploadFile | None,
+    allowed_fields: set[str],
 ):
+    await _reject_extras(request, allowed_fields)
     config_model = _parse_json_config(config_raw, STAGE_MODELS[stage_name])
-    input_arr = await _read_image(image, 'image')
-    ref_arr_awb = await _read_image(ref_image, 'ref_image')
-    ref_arr_fft = await _read_image(fft_ref_image, 'fft_ref_image')
-    lut_data, lut_filename = await _read_lut(lut_file)
 
-    if stage_name == 'lut' and lut_data is None:
+    image_bytes = await _read_bounded(image, 'image')
+    if lut_file is not None:
+        lut_bytes = await _read_bounded(lut_file, 'lut_file')
+    elif stage_name in LUT_STAGES:
         raise HTTPException(status_code=400, detail='lut_file is required for LUT processing')
+    else:
+        lut_bytes = None
 
-    if stage_name == 'fft' and config_model.fft_variant not in FOURIER_VARIANTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported fft_variant '{config_model.fft_variant}'")
+    stage_config = config_model.model_dump()
+    lut_name = None
+    lut_data = None
+    if stage_name in LUT_STAGES:
+        lut_name = _sanitize_name(lut_file.filename, 'upload.lut')
+        try:
+            lut_data = await run_in_threadpool(load_lut_bytes, lut_name, lut_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    ref_arr_awb = None
+    if stage_name in REF_AWB_STAGES and reference_image is not None:
+        ref_arr_awb = await run_in_threadpool(
+            _decode_rgb, await _read_bounded(reference_image, 'reference_image'), 'reference_image')
+    ref_arr_fft = None
+    if stage_name in REF_FFT_STAGES and reference_image is not None:
+        ref_arr_fft = await run_in_threadpool(
+            _decode_rgb, await _read_bounded(reference_image, 'reference_image'), 'reference_image')
+
+    input_arr = await run_in_threadpool(_decode_rgb, image_bytes, 'image')
 
     args = build_processing_args(
         enabled_stages=[stage_name],
-        stage_config=config_model.model_dump(),
+        stage_config=stage_config,
         execution_order=True,
         stage_order=[stage_name],
-        lut_path=lut_filename,
+        lut_path=lut_name,
         lut_data=lut_data,
         include_exif=include_exif,
     )
 
     try:
-        output_arr = process_array(input_arr, args, ref_arr_awb=ref_arr_awb, ref_arr_fft=ref_arr_fft)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        output_arr = await run_in_threadpool(
+            process_array, input_arr, args,
+            ref_arr_awb=ref_arr_awb, ref_arr_fft=ref_arr_fft, fail_fast=True,
+        )
+        image_out, media_type = await run_in_threadpool(
+            encode_image_array, output_arr,
+            output_format=output_format, include_exif=include_exif,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception('Stage processing failed for %s', stage_name)
+        raise HTTPException(status_code=500, detail='Internal processing error') from None
 
-    return _build_response(output_arr, output_format, include_exif, [stage_name])
+    return Response(
+        content=image_out,
+        media_type=media_type,
+        headers={
+            'X-Process': _PUBLIC_SEGMENT[stage_name],
+            'X-Output-Format': output_format,
+        },
+    )
+
+
+_BASE_FIELDS = {'image', 'config', 'output_format', 'include_exif'}
+
+
+async def _call_stage(stage_name: StageName, request: Request, image: UploadFile, config: str | None,
+                      output_format: OutputFormat, include_exif: bool,
+                      reference_image: UploadFile | None, lut_file: UploadFile | None):
+    allowed = set(_BASE_FIELDS)
+    if stage_name in REF_AWB_STAGES or stage_name in REF_FFT_STAGES:
+        allowed.add('reference_image')
+    if stage_name in LUT_STAGES:
+        allowed.add('lut_file')
+    return await _handle_stage(
+        stage_name=stage_name, request=request, image=image, config_raw=config,
+        output_format=output_format, include_exif=include_exif,
+        reference_image=reference_image, lut_file=lut_file,
+        allowed_fields=allowed,
+    )
+
+
+def _make_plain_endpoint(stage_name: StageName):
+    async def endpoint(request: Request, image: UploadFile = File(...), config: str | None = Form(None),
+                       output_format: OutputFormat = Form('png'), include_exif: bool = Form(False)):
+        return await _call_stage(stage_name, request, image, config, output_format, include_exif, None, None)
+    return endpoint
+
+
+def _make_ref_endpoint(stage_name: StageName):
+    async def endpoint(request: Request, image: UploadFile = File(...), config: str | None = Form(None),
+                       output_format: OutputFormat = Form('png'), include_exif: bool = Form(False),
+                       reference_image: UploadFile | None = File(None)):
+        return await _call_stage(stage_name, request, image, config, output_format, include_exif, reference_image, None)
+    return endpoint
+
+
+def _make_lut_endpoint():
+    async def endpoint(request: Request, image: UploadFile = File(...), config: str | None = Form(None),
+                       output_format: OutputFormat = Form('png'), include_exif: bool = Form(False),
+                       lut_file: UploadFile | None = File(None)):
+        return await _call_stage('lut', request, image, config, output_format, include_exif, None, lut_file)
+    return endpoint
+
+
+_STAGE_ENDPOINT_MAKERS = {
+    'blend': _make_plain_endpoint,
+    'non_semantic': _make_plain_endpoint,
+    'clahe': _make_plain_endpoint,
+    'noise': _make_plain_endpoint,
+    'perturb': _make_plain_endpoint,
+    'sim_camera': _make_plain_endpoint,
+    'fft': _make_ref_endpoint,
+    'glcm': _make_ref_endpoint,
+    'lbp': _make_ref_endpoint,
+    'awb': _make_ref_endpoint,
+    'lut': lambda stage: _make_lut_endpoint(),
+}
+
+
+_FORENSIC_FIELDS = {'image', 'config'}
+
+
+def _forensic_endpoint():
+    async def endpoint(request: Request, image: UploadFile = File(...), config: str | None = Form(None)):
+        await _reject_extras(request, _FORENSIC_FIELDS)
+        cfg = _parse_json_config(config, ForensicConfig)
+
+        dt = None
+        if cfg.datetime_original:
+            for fmt in _DATETIME_FORMATS:
+                try:
+                    dt = datetime.strptime(cfg.datetime_original.strip(), fmt)
+                    break
+                except ValueError:
+                    continue
+            if dt is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid datetime_original; expected format 'YYYY-MM-DD HH:MM:SS' or 'YYYY:MM:DD HH:MM:SS'",
+                )
+
+        image_bytes = await _read_bounded(image, 'image')
+        source_name = _sanitize_name(image.filename, 'image')
+
+        def run_forensic():
+            from io import BytesIO
+            try:
+                pil_image = Image.open(BytesIO(image_bytes))
+            except (UnidentifiedImageError, OSError, DecompressionBombError) as exc:
+                raise HTTPException(status_code=400, detail='image is not a valid image') from exc
+            opts = ForensicOptions(
+                profile=cfg.profile,
+                software=cfg.software,
+                datetime_original=dt,
+                iso=cfg.iso,
+                gps_lat=cfg.gps_lat,
+                gps_lon=cfg.gps_lon,
+                gps_alt=cfg.gps_alt,
+                ela_flatten=cfg.ela_flatten,
+                strip_fingerprints=cfg.strip_fingerprints,
+                seed=cfg.seed,
+                source_name=source_name,
+            )
+            with tempfile.TemporaryDirectory(prefix='forensic_') as tmpdir:
+                dest_path = os.path.join(tmpdir, 'result.jpg')
+                try:
+                    out_path = apply_forensic_camera(pil_image, dest_path, opts)
+                except Exception:
+                    logger.exception('Forensic processing failed')
+                    raise HTTPException(status_code=500, detail='Internal processing error') from None
+                try:
+                    with open(out_path, 'rb') as fh:
+                        out_bytes = fh.read()
+                finally:
+                    try:
+                        os.remove(out_path)
+                    except OSError:
+                        pass
+            return out_bytes
+
+        exiftool_available = bool(await run_in_threadpool(find_exiftool))
+
+        try:
+            out_bytes = await run_in_threadpool(run_forensic)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception('Forensic processing failed')
+            raise HTTPException(status_code=500, detail='Internal processing error') from None
+
+        metadata_level = 'full' if exiftool_available else 'degraded'
+        return Response(
+            content=out_bytes,
+            media_type='image/jpeg',
+            headers={
+                'X-Process': 'forensic-camera',
+                'X-Output-Format': 'jpeg',
+                'X-Forensic-Metadata': metadata_level,
+            },
+        )
+
+    return endpoint
 
 
 @app.get('/health', tags=['health'])
@@ -186,84 +355,10 @@ def health_check():
     return {'status': 'ok'}
 
 
-@router.post('/process/pipeline')
-async def process_pipeline(
-    image: UploadFile = File(...),
-    config: str = Form(...),
-    output_format: OutputFormat = Form('png'),
-    include_exif: bool = Form(True),
-    ref_image: UploadFile | None = File(None),
-    fft_ref_image: UploadFile | None = File(None),
-    lut_file: UploadFile | None = File(None),
-):
-    pipeline_config = _parse_json_config(config, PipelineConfig)
-    if not pipeline_config.stages:
-        raise HTTPException(status_code=400, detail='stages must contain at least one enabled stage')
+for _stage, _segment in _PUBLIC_SEGMENT.items():
+    _endpoint = _STAGE_ENDPOINT_MAKERS[_stage](_stage)
+    router.add_api_route(f'/{_segment}', _endpoint, methods=['POST'], name=f'stage_{_stage}')
 
-    stage_order = _validate_pipeline_order(pipeline_config)
-    stage_configs = {stage_name: _validate_stage_config(stage_name, stage_payload) for stage_name, stage_payload in pipeline_config.stages.items()}
-    input_arr = await _read_image(image, 'image')
-    ref_arr_awb = await _read_image(ref_image, 'ref_image')
-    ref_arr_fft = await _read_image(fft_ref_image, 'fft_ref_image')
-    lut_data, lut_filename = await _read_lut(lut_file)
-
-    if 'lut' in stage_configs and lut_data is None:
-        raise HTTPException(status_code=400, detail='lut_file is required for LUT processing')
-
-    fft_config = stage_configs.get('fft')
-    if fft_config and fft_config['fft_variant'] not in FOURIER_VARIANTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported fft_variant '{fft_config['fft_variant']}'")
-
-    merged_stage_config: dict[str, Any] = {}
-    for stage_payload in stage_configs.values():
-        merged_stage_config.update(stage_payload)
-
-    args = build_processing_args(
-        enabled_stages=list(stage_configs.keys()),
-        stage_config=merged_stage_config,
-        execution_order=pipeline_config.execution_order,
-        stage_order=stage_order if pipeline_config.execution_order else None,
-        lut_path=lut_filename,
-        lut_data=lut_data,
-        include_exif=include_exif,
-    )
-
-    try:
-        output_arr = process_array(input_arr, args, ref_arr_awb=ref_arr_awb, ref_arr_fft=ref_arr_fft)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return _build_response(output_arr, output_format, include_exif, stage_order)
-
-
-def _make_stage_endpoint(stage_name: StageName):
-    async def _endpoint(
-        image: UploadFile = File(...),
-        config: str = Form('{}'),
-        output_format: OutputFormat = Form('png'),
-        include_exif: bool = Form(True),
-        ref_image: UploadFile | None = File(None),
-        fft_ref_image: UploadFile | None = File(None),
-        lut_file: UploadFile | None = File(None),
-    ):
-        return await _run_stage_request(
-            stage_name=stage_name,
-            config_raw=config,
-            image=image,
-            output_format=output_format,
-            include_exif=include_exif,
-            ref_image=ref_image,
-            fft_ref_image=fft_ref_image,
-            lut_file=lut_file,
-        )
-
-    return _endpoint
-
-
-for stage_name, route_segment in STAGE_ROUTE_SEGMENTS.items():
-    _endpoint = _make_stage_endpoint(stage_name)
-
-    router.add_api_route(f'/process/{route_segment}', _endpoint, methods=['POST'], name=f'process_{stage_name}')
-
+router.add_api_route('/forensic-camera', _forensic_endpoint(), methods=['POST'], name='forensic_camera')
 
 app.include_router(router)

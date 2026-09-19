@@ -102,7 +102,7 @@ python run.py
 
 ### FastAPI Backend
 
-The repository now includes a FastAPI backend for stage-by-stage or multi-stage processing.
+The repository now includes a FastAPI backend for independent single-operation processing.
 
 Contract:
 
@@ -120,23 +120,70 @@ Or with Uvicorn directly:
 uvicorn api_backend.app:app --host 127.0.0.1 --port 8000
 ```
 
+Run from a project venv:
+
+```powershell
+# Windows (PowerShell)
+.\.venv\Scripts\python run_api.py
+```
+
+```bash
+# macOS / Linux with existing venv (see run.sh to create one)
+./run.sh
+```
+
 Key routes:
 
-* `GET /health`
-* `POST /api/v1/process/noise`
-* `POST /api/v1/process/clahe`
-* `POST /api/v1/process/fft`
-* `POST /api/v1/process/pipeline`
+Every endpoint performs exactly one operation. There is no server-side pipeline, stage order, or auto mode — the client owns composition and decides what to call next with each response.
 
-The backend uses multipart uploads and returns the processed image as the response body.
+* `GET /health`
+* `POST /api/v1/color-blend`
+* `POST /api/v1/non-semantic`
+* `POST /api/v1/clahe`
+* `POST /api/v1/fft`
+* `POST /api/v1/glcm`
+* `POST /api/v1/lbp`
+* `POST /api/v1/noise`
+* `POST /api/v1/perturb`
+* `POST /api/v1/sim-camera`
+* `POST /api/v1/awb`
+* `POST /api/v1/lut`
+* `POST /api/v1/forensic-camera`
+
+Shared request/response behavior:
+
+* All transforms use multipart form data: `image` (required), optional `config` (JSON object specific to that endpoint), optional `output_format` (`png` or `jpeg`, default `png`), optional `include_exif` (default `false`).
+* `reference_image` is accepted only by `/fft`, `/glcm`, `/lbp`, `/awb`; `/lut` requires `lut_file`.
+* Successful transforms return raw image bytes (`image/png` or `image/jpeg`) with `X-Process` and `X-Output-Format` headers; any ordinary response can be fed back as the `image` field of another endpoint.
+* `POST /api/v1/forensic-camera` is the explicit finalizer: it always returns JPEG (camera identity, MakerNote/EXIF, ELA response) and is the recommended final request. Re-sending its output through another endpoint re-encodes it and destroys that metadata.
+
+Since order belongs entirely to the client, two sites may choose different sequences:
+
+```text
+POST /api/v1/clahe -> POST /api/v1/noise -> POST /api/v1/color-blend
+                 -> POST /api/v1/lut -> POST /api/v1/fft -> POST /api/v1/forensic-camera
+```
+
+```text
+POST /api/v1/perturb -> POST /api/v1/glcm -> POST /api/v1/awb
+```
+
+For the full per-endpoint configuration schema, see [`contract.md`](contract.md).
 
 Curl-based smoke test:
 
+The script requires `-ImagePath` and talks to an already-running API (it does not start it). It generates only a temporary identity LUT fixture; the input image must be supplied by you.
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\test_api_with_curl.ps1
+# Pipeline A (clahe -> noise -> color-blend -> forensic-camera), default base URL
+powershell -ExecutionPolicy Bypass -File .\scripts\test_api_with_curl.ps1 -ImagePath .\input.jpg
+
+# Pipeline B (perturb -> lut -> awb -> glcm -> forensic-camera), custom API, keep response workspace
+powershell -ExecutionPolicy Bypass -File .\scripts\test_api_with_curl.ps1 `
+  -ImagePath .\input.jpg -Pipeline B -BaseUrl http://127.0.0.1:8000 -KeepResponses
 ```
 
-The script generates temporary sample fixtures, hits the health endpoint, exercises all single-stage routes plus both pipeline modes, and auto-starts `run_api.py` if the API is not already running. Use `-SkipStages non_semantic` if you want a faster pass or your local environment does not have that optional stack available.
+Parameters (all as implemented in the script): `-ImagePath` (required, must exist), `-Pipeline` (`A` or `B`, default `A`), `-BaseUrl` (default `http://127.0.0.1:8000`), `-KeepResponses` (switch: otherwise the temp workspace is deleted on exit).
 
 ---
 
