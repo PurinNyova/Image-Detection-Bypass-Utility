@@ -100,6 +100,30 @@ python run.py
 ./run.sh # also installs dependencies before running `python run.py`
 ```
 
+### Web Version (one click)
+
+Clone and run a single script. It creates `.venv`, installs the Python and Node
+dependencies, starts the FastAPI backend, starts the Next.js UI on
+<http://localhost:3000>, and opens the browser.
+
+```powershell
+git clone https://github.com/PurinNyova/Image-Detection-Bypass-Utility
+cd Image-Detection-Bypass-Utility
+.\run_web.cmd
+```
+
+On macOS / Linux (requires PowerShell 7+):
+
+```bash
+./run_web.sh
+```
+
+First run is slow because PyTorch is a large download. By default the CPU build
+is installed; pass `-Gpu` for CUDA 12.6. Other switches: `-Reinstall` (force
+reinstall), `-SkipInstall` (never touch pip/npm), `-ApiPort`, `-NoBrowser`.
+
+Requires Node.js 18+ and Python 3.10+ on `PATH`.
+
 ### FastAPI Backend
 
 The repository now includes a FastAPI backend for independent single-operation processing.
