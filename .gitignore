@@ -4,3 +4,6 @@ image_postprocess/bin/
 *.pyc
 .DS_Store
 .opencode
+.next/
+node_modules/
+tsconfig.tsbuildinfo
