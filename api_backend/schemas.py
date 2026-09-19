@@ -39,6 +39,10 @@ class NonSemanticConfig(StrictModel):
     ns_c_lpips: float = 1e-2
     ns_c_l2: float = 0.6
     ns_grad_clip: float = 0.05
+    ns_adaptive_c_lpips: bool = True
+    ns_c_lpips_min: float = 1e-4
+    ns_c_lpips_max: float = 1.0
+    ns_search_interval: int = 40
 
 
 class ClaheConfig(StrictModel):
@@ -54,7 +58,7 @@ class FFTConfig(StrictModel):
     randomness: float = 0.05
     phase_perturb: float = 0.08
     radial_smooth: int = 5
-    fft_variant: str = 'v2'
+    fft_variant: Literal['v1 (Original)', 'v2', 'v3', 'v4'] = 'v2'
     seed: int | None = None
 
 
@@ -105,6 +109,19 @@ class AWBConfig(StrictModel):
 
 class LUTConfig(StrictModel):
     lut_strength: float = 0.1
+
+
+class ForensicConfig(StrictModel):
+    profile: Literal['iphone_16_pro'] = 'iphone_16_pro'
+    software: str | None = None
+    datetime_original: str | None = None
+    iso: int | None = None
+    gps_lat: float | None = None
+    gps_lon: float | None = None
+    gps_alt: float | None = None
+    ela_flatten: bool = True
+    strip_fingerprints: bool = True
+    seed: int | None = None
 
 
 class PipelineConfig(StrictModel):

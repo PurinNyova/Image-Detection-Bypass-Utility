@@ -1,383 +1,225 @@
+#Requires -Version 7
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+    [string]$ImagePath,
+
     [string]$BaseUrl = 'http://127.0.0.1:8000',
-    [string]$PythonExe = '',
-    [string[]]$SkipStages = @(),
-    [switch]$KeepArtifacts
+
+    [ValidateSet('A', 'B')]
+    [string]$Pipeline = 'A',
+
+    [switch]$KeepResponses
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-
-$SkipStages = @(
-    $SkipStages |
-        ForEach-Object { $_ -split ',' } |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ }
-)
-
-$WorkspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$TempRoot = Join-Path $WorkspaceRoot '.tmp\curl-api-tests'
-$ArtifactsDir = Join-Path $TempRoot 'artifacts'
-$FixturesDir = Join-Path $TempRoot 'fixtures'
-$HeadersDir = Join-Path $TempRoot 'headers'
-$ConfigsDir = Join-Path $TempRoot 'configs'
-
-$serverProcess = $null
 
 function Write-Step {
     param([string]$Message)
     Write-Host "==> $Message"
 }
 
-function Assert-True {
+function Invoke-ComposeRequest {
     param(
-        [bool]$Condition,
-        [string]$Message
-    )
-
-    if (-not $Condition) {
-        throw $Message
-    }
-}
-
-function Resolve-PythonExecutable {
-    if ($PythonExe) {
-        return $PythonExe
-    }
-
-    $candidates = @(
-        (Join-Path $WorkspaceRoot '.venv\Scripts\python.exe'),
-        (Join-Path $WorkspaceRoot '.venv\bin\python'),
-        'python'
-    )
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
-            return (Resolve-Path $candidate).Path
-        }
-
-        $command = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($null -ne $command) {
-            return $command.Source
-        }
-    }
-
-    throw 'Python executable not found. Pass -PythonExe or create .venv before running this script.'
-}
-
-function Initialize-Workspace {
-    foreach ($path in @($TempRoot, $ArtifactsDir, $FixturesDir, $HeadersDir, $ConfigsDir)) {
-        if (Test-Path $path) {
-            Remove-Item -Recurse -Force $path
-        }
-        New-Item -ItemType Directory -Path $path | Out-Null
-    }
-}
-
-function New-Fixtures {
-    param([string]$ResolvedPythonExe)
-
-    $script = @'
-from pathlib import Path
-import sys
-
-import numpy as np
-from PIL import Image
-
-
-root = Path(sys.argv[1])
-root.mkdir(parents=True, exist_ok=True)
-
-size = 48
-x = np.linspace(0, 255, size, dtype=np.uint8)
-y = np.linspace(255, 0, size, dtype=np.uint8)
-xx, yy = np.meshgrid(x, y)
-
-sample = np.dstack([
-    xx,
-    yy,
-    np.full_like(xx, 128),
-])
-
-fft_ref = np.dstack([
-    np.roll(xx, 7, axis=1),
-    np.full_like(xx, 196),
-    np.roll(yy, 5, axis=0),
-])
-
-awb_ref = np.dstack([
-    np.full_like(xx, 170),
-    np.roll(xx, 3, axis=0),
-    np.roll(yy, 9, axis=1),
-])
-
-Image.fromarray(sample).save(root / 'sample.png')
-Image.fromarray(fft_ref).save(root / 'fft_ref.png')
-Image.fromarray(awb_ref).save(root / 'awb_ref.png')
-
-cube_lines = [
-    'TITLE "api-test"',
-    'LUT_3D_SIZE 2',
-    'DOMAIN_MIN 0.0 0.0 0.0',
-    'DOMAIN_MAX 1.0 1.0 1.0',
-]
-
-for r in (0.0, 1.0):
-    for g in (0.0, 1.0):
-        for b in (0.0, 1.0):
-            cube_lines.append(f'{b:.6f} {g:.6f} {r:.6f}')
-
-(root / 'identity.cube').write_text('\n'.join(cube_lines) + '\n', encoding='utf-8')
-'@
-
-    $script | & $ResolvedPythonExe - $FixturesDir
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to generate temporary API test fixtures.'
-    }
-}
-
-function Get-HeaderValue {
-    param(
-        [string]$HeadersPath,
-        [string]$HeaderName
-    )
-
-    if (-not (Test-Path $HeadersPath)) {
-        return $null
-    }
-
-    $pattern = '^(?i)' + [regex]::Escape($HeaderName) + ':\s*(.+)$'
-    $match = Get-Content $HeadersPath | Select-String -Pattern $pattern | Select-Object -Last 1
-    if ($null -eq $match) {
-        return $null
-    }
-
-    return $match.Matches[0].Groups[1].Value.Trim()
-}
-
-function Invoke-CurlRequest {
-    param(
-        [string]$Method,
         [string]$Url,
-        [string]$BodyPath,
+        [string[]]$FormFields,
+        [string]$OutPath,
         [string]$HeadersPath,
-        [string[]]$FormFields = @()
+        [string]$ExpectContentTypePrefix,
+        [string]$StepName
     )
 
-    $args = @('-sS', '-X', $Method, '-D', $HeadersPath, '-o', $BodyPath, '-w', '%{http_code}')
+    $curlArgs = @('-sS', '--fail-with-body', '-D', $HeadersPath, '-o', $OutPath)
     foreach ($field in $FormFields) {
-        if ($field -match '^[^=]+=[@<]') {
-            $args += @('-F', $field)
+        if ($field -match '^image=@|^reference_image=@|^lut_file=@') {
+            $curlArgs += @('-F', $field)
         }
         else {
-            $args += @('--form-string', $field)
+            # JSON config values go as literal strings so quoting stays safe on Windows.
+            $curlArgs += @('--form-string', $field)
         }
     }
-    $args += $Url
+    $curlArgs += $Url
 
-    $statusCode = & curl.exe @args
+    Write-Step $StepName
+    & curl.exe @curlArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "curl failed for $Method $Url"
+        throw "curl failed for $Url (exit code $LASTEXITCODE)"
     }
 
-    return [int]$statusCode
+    if (-not (Test-Path -LiteralPath $OutPath -PathType Leaf)) {
+        throw "No response body written for $Url"
+    }
+    if ((Get-Item -LiteralPath $OutPath).Length -le 0) {
+        throw "Empty response body from $Url"
+    }
+
+    $headerMatch = Get-Content -LiteralPath $HeadersPath |
+        Select-String -Pattern '^(?i)Content-Type:\s*(.+)$' |
+        Select-Object -Last 1
+    $contentType = if ($null -ne $headerMatch) { $headerMatch.Matches[0].Groups[1].Value.Trim() } else { $null }
+    if ($null -eq $contentType -or -not $contentType.ToLowerInvariant().StartsWith($ExpectContentTypePrefix)) {
+        throw "Unexpected Content-Type from ${Url}: $contentType"
+    }
+
+    Write-Host "    Content-Type: $contentType"
+    Write-Host "    Response file: $OutPath"
 }
 
-function Test-HealthEndpoint {
-    param([string]$TargetBaseUrl)
+function New-SampleLut {
+    param([string]$Path)
 
-    $bodyPath = Join-Path $ArtifactsDir 'health.json'
-    $headersPath = Join-Path $HeadersDir 'health.txt'
-    try {
-        $statusCode = Invoke-CurlRequest -Method 'GET' -Url "$TargetBaseUrl/health" -BodyPath $bodyPath -HeadersPath $headersPath
-    }
-    catch {
-        return $false
-    }
-
-    if ($statusCode -ne 200) {
-        return $false
-    }
-
-    $body = Get-Content -Raw $bodyPath | ConvertFrom-Json
-    return $body.status -eq 'ok'
-}
-
-function Ensure-ServerAvailable {
-    param([string]$ResolvedPythonExe)
-
-    if (Test-HealthEndpoint -TargetBaseUrl $BaseUrl) {
-        return
-    }
-
-    Write-Step 'FastAPI server not detected; starting run_api.py'
-
-    $stdoutPath = Join-Path $TempRoot 'server.stdout.log'
-    $stderrPath = Join-Path $TempRoot 'server.stderr.log'
-    $serverProcess = Start-Process -FilePath $ResolvedPythonExe -ArgumentList 'run_api.py' -WorkingDirectory $WorkspaceRoot -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
-    Set-Variable -Name serverProcess -Value $serverProcess -Scope Script
-
-    foreach ($attempt in 1..30) {
-        [System.Threading.Thread]::Sleep(1000)
-        if ($serverProcess.HasExited) {
-            $stderr = if (Test-Path $stderrPath) { Get-Content -Raw $stderrPath } else { '' }
-            throw "run_api.py exited before becoming healthy. $stderr"
-        }
-
-        if (Test-HealthEndpoint -TargetBaseUrl $BaseUrl) {
-            return
+    $lines = @(
+        'TITLE "api-test-identity"',
+        'LUT_3D_SIZE 2',
+        'DOMAIN_MIN 0.0 0.0 0.0',
+        'DOMAIN_MAX 1.0 1.0 1.0'
+    )
+    foreach ($b in 0.0, 1.0) {
+        foreach ($g in 0.0, 1.0) {
+            foreach ($r in 0.0, 1.0) {
+                $lines += ('{0:F6} {1:F6} {2:F6}' -f $b, $g, $r)
+            }
         }
     }
-
-    throw 'Timed out waiting for FastAPI server to become healthy on /health.'
+    [System.IO.File]::WriteAllText($Path, ($lines -join "`n") + "`n")
 }
 
-function ConvertTo-CompactJson {
-    param([object]$Value)
-    return ($Value | ConvertTo-Json -Depth 20 -Compress)
-}
+# Client-composition smoke test: each endpoint receives the raw binary
+# response of the previous endpoint as its "image" upload, so the ordering is
+# owned entirely by this client script. The forensic-camera JPEG finalizer
+# is invoked last in both pipelines.
 
-function Invoke-ImageTest {
-    param(
-        [string]$Name,
-        [string]$Route,
-        [string]$ExpectedStageOrder,
-        [hashtable]$Config,
-        [string[]]$ExtraFormFields = @()
-    )
-
-    $safeName = $Name.ToLowerInvariant().Replace(' ', '_')
-    $bodyPath = Join-Path $ArtifactsDir "$safeName.png"
-    $headersPath = Join-Path $HeadersDir "$safeName.txt"
-    $configPath = Join-Path $ConfigsDir "$safeName.json"
-    Set-Content -Path $configPath -Value (ConvertTo-CompactJson $Config) -Encoding UTF8 -NoNewline
-
-    $formFields = @(
-        "image=@$(Join-Path $FixturesDir 'sample.png')",
-        "config=<$configPath",
-        'output_format=png',
-        'include_exif=true'
-    ) + $ExtraFormFields
-
-    $statusCode = Invoke-CurlRequest -Method 'POST' -Url "$BaseUrl$Route" -BodyPath $bodyPath -HeadersPath $headersPath -FormFields $formFields
-    Assert-True ($statusCode -eq 200) "$Name failed with HTTP $statusCode"
-
-    $contentType = Get-HeaderValue -HeadersPath $headersPath -HeaderName 'Content-Type'
-    Assert-True ($null -ne $contentType -and $contentType.ToLowerInvariant().StartsWith('image/')) "$Name returned unexpected content type: $contentType"
-
-    $stageCount = Get-HeaderValue -HeadersPath $headersPath -HeaderName 'X-Stage-Count'
-    Assert-True ($stageCount -eq '1') "$Name returned unexpected X-Stage-Count: $stageCount"
-
-    $stageOrder = Get-HeaderValue -HeadersPath $headersPath -HeaderName 'X-Stage-Order'
-    Assert-True ($stageOrder -eq $ExpectedStageOrder) "$Name returned unexpected X-Stage-Order: $stageOrder"
-
-    $outputSize = (Get-Item $bodyPath).Length
-    Assert-True ($outputSize -gt 0) "$Name returned an empty body"
-}
-
-function Invoke-PipelineTest {
-    param(
-        [string]$Name,
-        [hashtable]$Config,
-        [string]$ExpectedStageOrder
-    )
-
-    $safeName = $Name.ToLowerInvariant().Replace(' ', '_')
-    $bodyPath = Join-Path $ArtifactsDir "$safeName.png"
-    $headersPath = Join-Path $HeadersDir "$safeName.txt"
-    $configPath = Join-Path $ConfigsDir "$safeName.json"
-    Set-Content -Path $configPath -Value (ConvertTo-CompactJson $Config) -Encoding UTF8 -NoNewline
-
-    $statusCode = Invoke-CurlRequest -Method 'POST' -Url "$BaseUrl/api/v1/process/pipeline" -BodyPath $bodyPath -HeadersPath $headersPath -FormFields @(
-        "image=@$(Join-Path $FixturesDir 'sample.png')",
-        "fft_ref_image=@$(Join-Path $FixturesDir 'fft_ref.png')",
-        "config=<$configPath",
-        'output_format=png',
-        'include_exif=true'
-    )
-
-    Assert-True ($statusCode -eq 200) "$Name failed with HTTP $statusCode"
-
-    $stageCount = Get-HeaderValue -HeadersPath $headersPath -HeaderName 'X-Stage-Count'
-    Assert-True ($stageCount -eq '3') "$Name returned unexpected X-Stage-Count: $stageCount"
-
-    $stageOrder = Get-HeaderValue -HeadersPath $headersPath -HeaderName 'X-Stage-Order'
-    Assert-True ($stageOrder -eq $ExpectedStageOrder) "$Name returned unexpected X-Stage-Order: $stageOrder"
-
-    $outputSize = (Get-Item $bodyPath).Length
-    Assert-True ($outputSize -gt 0) "$Name returned an empty body"
-}
+$WorkspaceDir = Join-Path ([System.IO.Path]::GetTempPath()) ('curl-compose-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 
 try {
-    Write-Step 'Preparing curl API smoke test workspace'
-    Initialize-Workspace
+    New-Item -ItemType Directory -Path $WorkspaceDir | Out-Null
 
-    Write-Step 'Resolving Python interpreter and generating fixtures'
-    $resolvedPythonExe = Resolve-PythonExecutable
-    New-Fixtures -ResolvedPythonExe $resolvedPythonExe
+    $resolvedInput = (Resolve-Path -LiteralPath $ImagePath).Path
+    Write-Step "Validated input image: $resolvedInput"
+    Write-Step "Base URL: $BaseUrl"
+    Write-Step "Pipeline: $Pipeline"
 
-    Write-Step 'Ensuring FastAPI backend is available'
-    Ensure-ServerAvailable -ResolvedPythonExe $resolvedPythonExe
-
-    Write-Step 'Checking health endpoint'
-    Assert-True (Test-HealthEndpoint -TargetBaseUrl $BaseUrl) 'Health endpoint did not return status=ok'
-
-    $stageTests = @(
-        [pscustomobject]@{ Name = 'Blend'; Route = '/api/v1/process/blend'; Stage = 'blend'; Config = @{}; Extra = @() },
-        [pscustomobject]@{ Name = 'Non Semantic'; Route = '/api/v1/process/non-semantic'; Stage = 'non_semantic'; Config = @{ ns_iterations = 1; ns_learning_rate = 0.0003; ns_t_lpips = 0.04; ns_t_l2 = 0.00003; ns_c_lpips = 0.01; ns_c_l2 = 0.6; ns_grad_clip = 0.05 }; Extra = @() },
-        [pscustomobject]@{ Name = 'CLAHE'; Route = '/api/v1/process/clahe'; Stage = 'clahe'; Config = @{}; Extra = @() },
-        [pscustomobject]@{ Name = 'FFT'; Route = '/api/v1/process/fft'; Stage = 'fft'; Config = @{ fft_mode = 'ref'; fft_variant = 'v2'; seed = 7 }; Extra = @("fft_ref_image=@$(Join-Path $FixturesDir 'fft_ref.png')") },
-        [pscustomobject]@{ Name = 'GLCM'; Route = '/api/v1/process/glcm'; Stage = 'glcm'; Config = @{ glcm_distances = @(1); glcm_angles = @(0.0, 0.7853981634); glcm_levels = 64; glcm_strength = 0.6; seed = 7 }; Extra = @("fft_ref_image=@$(Join-Path $FixturesDir 'fft_ref.png')") },
-        [pscustomobject]@{ Name = 'LBP'; Route = '/api/v1/process/lbp'; Stage = 'lbp'; Config = @{ lbp_radius = 2; lbp_n_points = 16; lbp_method = 'uniform'; lbp_strength = 0.6; seed = 7 }; Extra = @("fft_ref_image=@$(Join-Path $FixturesDir 'fft_ref.png')") },
-        [pscustomobject]@{ Name = 'Noise'; Route = '/api/v1/process/noise'; Stage = 'noise'; Config = @{ noise_std = 0.01; seed = 7 }; Extra = @() },
-        [pscustomobject]@{ Name = 'Perturb'; Route = '/api/v1/process/perturb'; Stage = 'perturb'; Config = @{ perturb_magnitude = 0.003; seed = 7 }; Extra = @() },
-        [pscustomobject]@{ Name = 'Sim Camera'; Route = '/api/v1/process/sim-camera'; Stage = 'sim_camera'; Config = @{ jpeg_cycles = 1; motion_blur_kernel = 1; seed = 7 }; Extra = @() },
-        [pscustomobject]@{ Name = 'AWB'; Route = '/api/v1/process/awb'; Stage = 'awb'; Config = @{ seed = 7 }; Extra = @("ref_image=@$(Join-Path $FixturesDir 'awb_ref.png')") },
-        [pscustomobject]@{ Name = 'LUT'; Route = '/api/v1/process/lut'; Stage = 'lut'; Config = @{ lut_strength = 0.2 }; Extra = @("lut_file=@$(Join-Path $FixturesDir 'identity.cube')") }
-    )
-
-    foreach ($test in $stageTests) {
-        if ($SkipStages -contains $test.Stage) {
-            Write-Step "Skipping $($test.Stage)"
-            continue
-        }
-
-        Write-Step "Running $($test.Name)"
-        Invoke-ImageTest -Name $test.Name -Route $test.Route -ExpectedStageOrder $test.Stage -Config $test.Config -ExtraFormFields $test.Extra
+    Write-Step 'Health check'
+    & curl.exe -sS --fail-with-body -o (Join-Path $WorkspaceDir 'health.json') "$BaseUrl/health"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Health check failed against $BaseUrl/health (is the server running?)"
+    }
+    $health = Get-Content -Raw (Join-Path $WorkspaceDir 'health.json') | ConvertFrom-Json
+    if ($health.status -ne 'ok') {
+        throw 'Health endpoint did not report status=ok'
     }
 
-    Write-Step 'Running pipeline default-order coverage'
-    Invoke-PipelineTest -Name 'Pipeline Default Order' -ExpectedStageOrder 'clahe,fft,noise' -Config @{
-        execution_order = $false
-        stages = @{
-            noise = @{ noise_std = 0.01; seed = 11 }
-            clahe = @{ clahe_clip = 2.0; tile = 8 }
-            fft = @{ fft_mode = 'ref'; fft_variant = 'v2'; seed = 11 }
+    $lutPath = $null
+    $pipelineSteps = switch ($Pipeline) {
+        'A' {
+            # Order: clahe -> noise -> color-blend -> forensic-camera
+            @(
+                [pscustomobject]@{
+                    Name = 'CLAHE normalization'
+                    Url = "$BaseUrl/api/v1/clahe"
+                    Form = @('config={"clahe_clip":2.0,"tile":8}', 'output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Gaussian noise'
+                    Url = "$BaseUrl/api/v1/noise"
+                    Form = @('config={"noise_std":0.01,"seed":123}', 'output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Color-region blending'
+                    Url = "$BaseUrl/api/v1/color-blend"
+                    Form = @('output_format=png', 'include_exif=true')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Forensic camera finalizer'
+                    Url = "$BaseUrl/api/v1/forensic-camera"
+                    Form = @('config={"profile":"iphone_16_pro","software":"17.1.2","seed":7}')
+                    ExpectPrefix = 'image/jpeg'
+                    Ext = 'jpg'
+                }
+            )
+        }
+        'B' {
+            $lutPath = Join-Path $WorkspaceDir 'identity.cube'
+            New-SampleLut -Path $lutPath
+
+            # Order: perturb -> lut -> awb -> glcm -> forensic-camera
+            @(
+                [pscustomobject]@{
+                    Name = 'Randomized perturbation'
+                    Url = "$BaseUrl/api/v1/perturb"
+                    Form = @('config={"perturb_magnitude":0.003,"seed":11}', 'output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Apply identity LUT'
+                    Url = "$BaseUrl/api/v1/lut"
+                    Form = @("lut_file=@$lutPath", 'config={"lut_strength":0.2}', 'output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Auto white balance'
+                    Url = "$BaseUrl/api/v1/awb"
+                    Form = @('output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'GLCM normalization'
+                    Url = "$BaseUrl/api/v1/glcm"
+                    Form = @('config={"glcm_distances":[1],"glcm_angles":[0.0],"glcm_levels":64,"glcm_strength":0.6,"seed":13}', 'output_format=png')
+                    ExpectPrefix = 'image/'
+                    Ext = 'png'
+                },
+                [pscustomobject]@{
+                    Name = 'Forensic camera finalizer'
+                    Url = "$BaseUrl/api/v1/forensic-camera"
+                    Form = @('config={"profile":"iphone_16_pro","software":"14.0","seed":9}')
+                    ExpectPrefix = 'image/jpeg'
+                    Ext = 'jpg'
+                }
+            )
         }
     }
 
-    Write-Step 'Running pipeline explicit-order coverage'
-    Invoke-PipelineTest -Name 'Pipeline Explicit Order' -ExpectedStageOrder 'noise,fft,clahe' -Config @{
-        execution_order = $true
-        stage_order = @('noise', 'fft', 'clahe')
-        stages = @{
-            noise = @{ noise_std = 0.01; seed = 13 }
-            clahe = @{ clahe_clip = 2.0; tile = 8 }
-            fft = @{ fft_mode = 'ref'; fft_variant = 'v2'; seed = 13 }
-        }
+    $currentImage = $resolvedInput
+    $index = 0
+
+    foreach ($step in $pipelineSteps) {
+        $safeName = ($step.Name.ToLowerInvariant() -replace '[^a-z0-9]+', '_').Trim('_')
+        $outPath = Join-Path $WorkspaceDir ("{0:D2}_{1}.{2}" -f $index, $safeName, $step.Ext)
+        $headersPath = Join-Path $WorkspaceDir ("{0:D2}_{1}.headers.txt" -f $index, $safeName)
+
+        # Every request gets the previous response as its "image" upload.
+        $formFields = @("image=@$currentImage") + @($step.Form)
+
+        Invoke-ComposeRequest -Url $step.Url -FormFields $formFields -OutPath $outPath `
+            -HeadersPath $headersPath -ExpectContentTypePrefix $step.ExpectPrefix `
+            -StepName ("{0} -> {1}" -f $step.Name, ($step.Url -replace [regex]::Escape($BaseUrl), ''))
+
+        $currentImage = $outPath
+        $index++
     }
 
-    Write-Host ''
-    Write-Host 'All curl API smoke tests passed.' -ForegroundColor Green
-    Write-Host "Artifacts: $ArtifactsDir"
+    Write-Step 'Composition finished; response files preserved:'
+    Write-Host "Final output: $currentImage"
+    Write-Host "Workspace:    $WorkspaceDir"
+    if (-not $KeepResponses) {
+        Write-Host 'Pass -KeepResponses to preserve the workspace; otherwise it is removed on exit.'
+    }
 }
 finally {
-    if ($serverProcess -and -not $serverProcess.HasExited) {
-        Stop-Process -Id $serverProcess.Id -Force
-    }
-
-    if (-not $KeepArtifacts -and (Test-Path $TempRoot)) {
-        Remove-Item -Recurse -Force $TempRoot
+    if (-not $KeepResponses -and (Test-Path -LiteralPath $WorkspaceDir)) {
+        Remove-Item -LiteralPath $WorkspaceDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

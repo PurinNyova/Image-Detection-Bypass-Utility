@@ -3,3 +3,4 @@ __pycache__/
 image_postprocess/bin/
 *.pyc
 .DS_Store
+.opencode
