@@ -18,6 +18,10 @@ class NSOptionsNode:
                 "ns_c_lpips": ("FLOAT", {"default": 1e-2, "min": 0.0, "max": 1.0, "step": 1e-4}),
                 "ns_c_l2": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 10.0, "step": 1e-3}),
                 "ns_grad_clip": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 1e-4}),
+                "ns_adaptive_c_lpips": ("BOOLEAN", {"default": True}),
+                "ns_c_lpips_min": ("FLOAT", {"default": 1e-4, "min": 0.0, "max": 1.0, "step": 1e-4}),
+                "ns_c_lpips_max": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 1e-4}),
+                "ns_search_interval": ("INT", {"default": 40, "min": 1, "max": 10000, "step": 1}),
             }
         }
 
@@ -35,6 +39,10 @@ class NSOptionsNode:
                     ns_c_lpips=1e-2,
                     ns_c_l2=0.6,
                     ns_grad_clip=0.05,
+                    ns_adaptive_c_lpips=True,
+                    ns_c_lpips_min=1e-4,
+                    ns_c_lpips_max=1.0,
+                    ns_search_interval=40,
                     ):
         ns_opts = {
             "non_semantic": bool(non_semantic),
@@ -45,5 +53,9 @@ class NSOptionsNode:
             "ns_c_lpips": float(ns_c_lpips),
             "ns_c_l2": float(ns_c_l2),
             "ns_grad_clip": float(ns_grad_clip),
+            "ns_adaptive_c_lpips": bool(ns_adaptive_c_lpips),
+            "ns_c_lpips_min": float(ns_c_lpips_min),
+            "ns_c_lpips_max": float(ns_c_lpips_max),
+            "ns_search_interval": int(ns_search_interval),
         }
         return (json.dumps(ns_opts),)
