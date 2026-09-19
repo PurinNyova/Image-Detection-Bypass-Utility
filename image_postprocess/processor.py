@@ -96,7 +96,11 @@ def process_image(path_in, path_out, args):
                 t_l2=args.ns_t_l2,
                 c_lpips=args.ns_c_lpips,
                 c_l2=args.ns_c_l2,
-                grad_clip_value=args.ns_grad_clip
+                grad_clip_value=args.ns_grad_clip,
+                adaptive_c_lpips=getattr(args, 'ns_adaptive_c_lpips', True),
+                c_lpips_min=getattr(args, 'ns_c_lpips_min', 1e-4),
+                c_lpips_max=getattr(args, 'ns_c_lpips_max', 1.0),
+                search_interval=getattr(args, 'ns_search_interval', 40)
             )
         except Exception as e:
             print(f"Warning: Non-semantic attack failed: {e}. Skipping non-semantic attack.")
@@ -113,7 +117,7 @@ def process_image(path_in, path_out, args):
                           alpha=args.fft_alpha, cutoff=args.cutoff,
                           strength=args.fstrength, randomness=args.randomness,
                           seed=args.seed)
-        if fft_variant != 'v3':
+        if fft_variant not in ('v3', 'v4'):
             fft_kwargs['phase_perturb'] = args.phase_perturb
         fft_kwargs['radial_smooth'] = args.radial_smooth
         arr = fft_func(arr, **fft_kwargs)
@@ -255,6 +259,10 @@ def build_argparser():
     p.add_argument('--ns-c-lpips', type=float, default=1e-2, help='LPIPS constant for non-semantic attack')
     p.add_argument('--ns-c-l2', type=float, default=0.6, help='L2 constant for non-semantic attack')
     p.add_argument('--ns-grad-clip', type=float, default=0.05, help='Gradient clipping value for non-semantic attack')
+    p.add_argument('--ns-adaptive-c-lpips', action='store_true', default=True, help='Adaptively search the LPIPS constant for non-semantic attack')
+    p.add_argument('--ns-c-lpips-min', type=float, default=1e-4, help='Lower bound of the adaptive LPIPS constant search')
+    p.add_argument('--ns-c-lpips-max', type=float, default=1.0, help='Upper bound of the adaptive LPIPS constant search')
+    p.add_argument('--ns-search-interval', type=int, default=40, help='Optimization steps per adaptive LPIPS constant search trial')
 
     # Camera-simulator options
     p.add_argument('--sim-camera', action='store_true', default=False, help='Enable camera-pipeline simulation (Bayer, CA, vignette, JPEG cycles)')
