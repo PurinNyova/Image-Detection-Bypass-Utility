@@ -351,69 +351,41 @@ class NovaNodes:
                 # utility flags (positive-style equivalents)
                 perturb=(True if perturb_mag_frac > 0 else False),
                 perturb_magnitude=float(perturb_mag_frac),
-                blend=False
+                blend=False,
+
+                # Forensic camera (replaces piexif stub when apply_exif_o)
+                forensic_camera=bool(apply_exif_o),
+                forensic_profile="iphone_16_pro",
+                forensic_software="18.5",
+                forensic_datetime=None,
+                ela_flatten=True,
+                strip_fingerprints=True,
+                gps_lat=None,
+                gps_lon=None,
+                gps_alt=None,
             )
 
-            # ---- Run the processing function ----
+            # ---- Run the processing function (forensic EXIF is written here) ----
             process_image(input_path, output_path, args)
 
-            # ---- Load result (force RGB) ----
             output_img = Image.open(output_path).convert("RGB")
             img_out = np.array(output_img)
+            tensor_out = torch.from_numpy(img_out.astype(np.float32) / 255.0).unsqueeze(0)
 
-            # ---- EXIF insertion (optional) ----
             new_exif = ""
             if apply_exif_o:
                 try:
-                    output_img_with_exif, new_exif = self._add_fake_exif(output_img)
-                    output_img = output_img_with_exif
-                    img_out = np.array(output_img.convert("RGB"))
+                    import piexif
+                    new_exif = str(piexif.load(output_path))
                 except Exception:
-                    new_exif = ""
-
-            # ---- Convert to FOOLAI-style tensor: (1, H, W, C), float32 in [0,1] ----
-            img_float = img_out.astype(np.float32) / 255.0
-            tensor_out = torch.from_numpy(img_float).to(dtype=torch.float32).unsqueeze(0)
-            tensor_out = torch.clamp(tensor_out, 0.0, 1.0)
-
+                    new_exif = "forensic_camera=iphone_16_pro"
             return (tensor_out, new_exif)
-
         finally:
             for p in tmp_files:
                 try:
                     os.unlink(p)
                 except Exception:
                     pass
-
-    def _add_fake_exif(self, img: Image.Image) -> Tuple[Image.Image, str]:
-        """Insert random but realistic camera EXIF metadata."""
-        import random
-        import io
-        try:
-            import piexif
-        except Exception:
-            raise
-
-        exif_dict = {
-            "0th": {
-                piexif.ImageIFD.Make: random.choice(["Canon", "Nikon", "Sony", "Fujifilm", "Olympus", "Leica"]),
-                piexif.ImageIFD.Model: random.choice([
-                    "EOS 5D Mark III", "D850", "Alpha 7R IV", "X-T4", "OM-D E-M1 Mark III", "Q2"
-                ]),
-                piexif.ImageIFD.Software: "Adobe Lightroom",
-            },
-            "Exif": {
-                piexif.ExifIFD.FNumber: (random.randint(10, 22), 10),
-                piexif.ExifIFD.ExposureTime: (1, random.randint(60, 4000)),
-                piexif.ExifIFD.ISOSpeedRatings: random.choice([100, 200, 400, 800, 1600, 3200]),
-                piexif.ExifIFD.FocalLength: (random.randint(24, 200), 1),
-            },
-        }
-        exif_bytes = piexif.dump(exif_dict)
-        output = io.BytesIO()
-        img.save(output, format="JPEG", exif=exif_bytes)
-        output.seek(0)
-        return (Image.open(output), str(exif_bytes))
 
 
 # -------------
