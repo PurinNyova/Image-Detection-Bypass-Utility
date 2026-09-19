@@ -5,6 +5,7 @@ from .exif import remove_exif_pil
 from .fourier_pipeline import fourier_match_spectrum as fourier_match_spectrum_v1
 from .fourier_pipeline_v2 import fourier_match_spectrum as fourier_match_spectrum_v2
 from .fourier_pipeline_v3 import fourier_match_spectrum_v3
+from .fourier_pipeline_v4 import fourier_match_spectrum_v4
 from .gaussian_noise import add_gaussian_noise
 from .perturbation import randomized_perturbation
 from .glcm_normalization import glcm_normalize
@@ -19,6 +20,7 @@ FOURIER_VARIANTS = {
     "v1 (Original)": fourier_match_spectrum_v1,
     "v2": fourier_match_spectrum_v2,
     "v3": fourier_match_spectrum_v3,
+    "v4": fourier_match_spectrum_v4,
 }
 
 __all__ = [
@@ -31,6 +33,7 @@ __all__ = [
     'fourier_match_spectrum_v1',
     'fourier_match_spectrum_v2',
     'fourier_match_spectrum_v3',
+    'fourier_match_spectrum_v4',
     'FOURIER_VARIANTS',
     'add_gaussian_noise',
     'randomized_perturbation',
